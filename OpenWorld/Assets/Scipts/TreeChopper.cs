@@ -168,6 +168,9 @@ public class TreeChopper : MonoBehaviour
 
         yield return new WaitForSeconds(0.3f);
         isProcessingCut = false; 
+
+        // Tell the GameManager a tree has dropped, prompting it to calculation-darken the sky
+        if (GameManager.Instance != null) GameManager.Instance.TreeWasCut();
     }
 
     void ResetChopProgress()

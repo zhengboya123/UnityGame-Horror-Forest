@@ -1,66 +1,93 @@
 using UnityEngine;
+using TMPro;
 
 public class InventorySystem : MonoBehaviour
 {
-    // Index 0 = Empty, Index 1 = Axe, Index 2 = Wood Log
     public bool[] unlockedSlots = new bool[3]; 
     public int currentSlot = 0;
 
-    // Drag your HandContainer's child 'axe' GameObject here
+    [Header("Item Collection Counters")]
+    public int woodLogCount = 0;
+    public const int MAX_LOG_CAPACITY = 3; 
+
+    [Header("First-Person Visual Models")]
     public GameObject visualAxeInHand; 
+    public GameObject visualLogInHand; 
+
+    [Header("UI Display Connections")]
+    public TextMeshProUGUI logTextUI; // Drag 'WoodInventoryDisplay' text object here!
 
     void Start()
     {
-        unlockedSlots[0] = true;  // Bare hands are always unlocked
-        unlockedSlots[1] = false; // Locked until you press E on ground axe
-        unlockedSlots[2] = false; // Locked until you chop a tree
+        unlockedSlots[0] = true;  
+        unlockedSlots[1] = false; 
+        unlockedSlots[2] = false; 
 
-        ForceHandUpdate();
+        UpdateCounterUI();
+        UpdateHandItemVisuals();
     }
 
     void Update()
     {
-        if (Input.GetKeyDown(KeyCode.Alpha1)) SwitchToSlot(0);
-        if (Input.GetKeyDown(KeyCode.Alpha2)) SwitchToSlot(1);
-        if (Input.GetKeyDown(KeyCode.Alpha3)) SwitchToSlot(2);
+        if (Input.GetKeyDown(KeyCode.Alpha1)) ChangeActiveSlot(0);
+        if (Input.GetKeyDown(KeyCode.Alpha2)) ChangeActiveSlot(1);
+        if (Input.GetKeyDown(KeyCode.Alpha3)) ChangeActiveSlot(2);
     }
 
-    // THIS IS THE EXACT INTERACTION METHOD CALLED BY THE PICKUP SCRIPT
-    public void AddItemToHotbar(int slotIndex, string itemType)
+    public bool CanPickupLog()
     {
-        unlockedSlots[slotIndex] = true; // Permanently unlocks the slot data
-        Debug.Log("Inventory saved! Unlocked slot: " + slotIndex);
-        
-        // Force the player to equip it immediately upon pickup
-        SwitchToSlot(slotIndex);
+        return woodLogCount < MAX_LOG_CAPACITY;
     }
 
-    void SwitchToSlot(int index)
+    public void AddItemToHotbar(int slotIndex, string itemName)
+    {
+        unlockedSlots[slotIndex] = true;
+        
+        if (itemName == "Wood_Log")
+        {
+            if (woodLogCount >= MAX_LOG_CAPACITY) return; 
+            woodLogCount++;
+        }
+
+        UpdateCounterUI();
+        ChangeActiveSlot(slotIndex); 
+    }
+
+    void ChangeActiveSlot(int index)
     {
         if (index < 0 || index >= unlockedSlots.Length) return;
-
         currentSlot = index;
-        ForceHandUpdate();
+        UpdateHandItemVisuals();
     }
 
-    public void ForceHandUpdate()
+    public void UpdateHandItemVisuals()
     {
-        if (visualAxeInHand == null) return;
-
-        // Strictly check if we are on slot 2 AND we actually picked up the axe
-        if (currentSlot == 1 && unlockedSlots[1] == true)
+        if (visualAxeInHand != null)
         {
-            visualAxeInHand.SetActive(true);
+            visualAxeInHand.SetActive(currentSlot == 1 && unlockedSlots[1]);
         }
-        else
+        
+        if (visualLogInHand != null)
         {
-            // Turn it off if we switch to slot 1 or 3, or if we don't own it yet
-            visualAxeInHand.SetActive(false);
+            visualLogInHand.SetActive(currentSlot == 2 && unlockedSlots[2] && woodLogCount > 0);
         }
     }
 
-    public bool IsHoldingAxe()
+    public void UpdateCounterUI()
     {
-        return currentSlot == 1 && unlockedSlots[1] == true;
+        if (logTextUI != null) 
+        {
+            // CRITICAL FIX: Forces the UI slot text box to instantly display the number digit, clearing old text strings
+            logTextUI.text = woodLogCount > 0 ? woodLogCount.ToString() : "";
+        }
     }
+
+    public void EmptyLogsForProcessing()
+    {
+        woodLogCount = 0;
+        UpdateCounterUI();
+        UpdateHandItemVisuals();
+    }
+
+    public bool IsHoldingAxe() { return currentSlot == 1 && unlockedSlots[1]; }
 }
