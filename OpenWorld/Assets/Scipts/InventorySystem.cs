@@ -63,4 +63,49 @@ public class InventorySystem : MonoBehaviour
     {
         return currentSlot == 1 && unlockedSlots[1] == true;
     }
+<<<<<<< Updated upstream
+=======
+
+    public void EmptyLogsForProcessing()
+    {
+        woodLogCount = 0;
+        UpdateCounterUI();
+        UpdateHandItemVisuals();
+    }
+
+    public bool IsHoldingAxe() { return currentSlot == 1 && unlockedSlots[1]; }
+
+    // Called when dropping the Axe
+    public void DropAxeFromInventory()
+    {
+        unlockedSlots[1] = false; // Lock the slot back up
+        if (currentSlot == 1)
+        {
+            ChangeActiveSlot(0); // Safely switch back to empty hands (Slot 1)
+        }
+        UpdateHandItemVisuals();
+    }
+
+    // Called when tossing 1 Log
+    public void DropSingleLogFromInventory()
+    {
+        if (woodLogCount > 0)
+        {
+            woodLogCount--;
+            
+            // If they threw their very last log, lock the slot and clear hands
+            if (woodLogCount == 0)
+            {
+                unlockedSlots[2] = false;
+                if (currentSlot == 2)
+                {
+                    ChangeActiveSlot(0); // Switch to empty hands
+                }
+            }
+            
+            UpdateCounterUI();
+            UpdateHandItemVisuals(); // Keeps showing the log model if count > 0!
+        }
+    }
+>>>>>>> Stashed changes
 }
