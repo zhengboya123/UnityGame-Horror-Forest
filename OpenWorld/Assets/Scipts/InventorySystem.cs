@@ -2,98 +2,105 @@ using UnityEngine;
 
 public class InventorySystem : MonoBehaviour
 {
-    // Index 0 = Empty, Index 1 = Axe, Index 2 = Wood Log
+    // Index 0 = Empty hands, Index 1 = Axe, Index 2 = Wood Log
     public bool[] unlockedSlots = new bool[3]; 
     public int currentSlot = 0;
 
-    // Drag your HandContainer's child 'axe' GameObject here
-    public GameObject visualAxeInHand; 
+    [Header("Resource Counters")]
+    public int woodLogCount = 0; // Tracks logs gathered up to 3 max
+
+    [Header("Hand Model References")]
+    public GameObject visualAxeInHand; // Drag your Player Hand's child 'axe' GameObject here
+    public GameObject visualLogInHand; // Drag your Player Hand's child 'log' GameObject here
 
     void Start()
     {
         unlockedSlots[0] = true;  // Bare hands are always unlocked
         unlockedSlots[1] = false; // Locked until you press E on ground axe
-        unlockedSlots[2] = false; // Locked until you chop a tree
+        unlockedSlots[2] = false; // Locked until you pick up a log
 
-        ForceHandUpdate();
+        UpdateHandItemVisuals();
     }
 
     void Update()
     {
-        if (Input.GetKeyDown(KeyCode.Alpha1)) SwitchToSlot(0);
-        if (Input.GetKeyDown(KeyCode.Alpha2)) SwitchToSlot(1);
-        if (Input.GetKeyDown(KeyCode.Alpha3)) SwitchToSlot(2);
+        if (Input.GetKeyDown(KeyCode.Alpha1)) ChangeActiveSlot(0);
+        if (Input.GetKeyDown(KeyCode.Alpha2)) ChangeActiveSlot(1);
+        if (Input.GetKeyDown(KeyCode.Alpha3)) ChangeActiveSlot(2);
     }
 
-    // THIS IS THE EXACT INTERACTION METHOD CALLED BY THE PICKUP SCRIPT
     public void AddItemToHotbar(int slotIndex, string itemType)
     {
         unlockedSlots[slotIndex] = true; // Permanently unlocks the slot data
-        Debug.Log("Inventory saved! Unlocked slot: " + slotIndex);
+        
+        if (slotIndex == 2)
+        {
+            woodLogCount++; // Increments log inventory count
+            if (woodLogCount > 3) woodLogCount = 3; // Keep clamped at capacity
+        }
+
+        Debug.Log("Inventory saved! Unlocked slot: " + slotIndex + " | Item: " + itemType);
         
         // Force the player to equip it immediately upon pickup
-        SwitchToSlot(slotIndex);
+        ChangeActiveSlot(slotIndex);
     }
 
-    void SwitchToSlot(int index)
+    public void ChangeActiveSlot(int index)
     {
         if (index < 0 || index >= unlockedSlots.Length) return;
 
         currentSlot = index;
-        ForceHandUpdate();
+        UpdateHandItemVisuals();
     }
 
-    public void ForceHandUpdate()
+    public void UpdateHandItemVisuals()
     {
-        if (visualAxeInHand == null) return;
-
-        // Strictly check if we are on slot 2 AND we actually picked up the axe
-        if (currentSlot == 1 && unlockedSlots[1] == true)
+        if (visualAxeInHand != null)
         {
-            visualAxeInHand.SetActive(true);
+            visualAxeInHand.SetActive(currentSlot == 1 && unlockedSlots[1]);
         }
-        else
+
+        if (visualLogInHand != null)
         {
-            // Turn it off if we switch to slot 1 or 3, or if we don't own it yet
-            visualAxeInHand.SetActive(false);
+            visualLogInHand.SetActive(currentSlot == 2 && unlockedSlots[2] && woodLogCount > 0);
         }
     }
 
-    public bool IsHoldingAxe()
+    public bool CanPickupLog()
     {
-        return currentSlot == 1 && unlockedSlots[1] == true;
+        return woodLogCount < 3;
     }
-<<<<<<< Updated upstream
-=======
+
+    public bool IsHoldingAxe() 
+    { 
+        return currentSlot == 1 && unlockedSlots[1]; 
+    }
 
     public void EmptyLogsForProcessing()
     {
         woodLogCount = 0;
-        UpdateCounterUI();
+        unlockedSlots[2] = false;
         UpdateHandItemVisuals();
     }
 
-    public bool IsHoldingAxe() { return currentSlot == 1 && unlockedSlots[1]; }
-
-    // Called when dropping the Axe
+    // Called when dropping the Axe via [Q]
     public void DropAxeFromInventory()
     {
         unlockedSlots[1] = false; // Lock the slot back up
         if (currentSlot == 1)
         {
-            ChangeActiveSlot(0); // Safely switch back to empty hands (Slot 1)
+            ChangeActiveSlot(0); // Safely switch back to empty hands
         }
         UpdateHandItemVisuals();
     }
 
-    // Called when tossing 1 Log
+    // Called when tossing 1 Log via [Q]
     public void DropSingleLogFromInventory()
     {
         if (woodLogCount > 0)
         {
             woodLogCount--;
             
-            // If they threw their very last log, lock the slot and clear hands
             if (woodLogCount == 0)
             {
                 unlockedSlots[2] = false;
@@ -103,9 +110,7 @@ public class InventorySystem : MonoBehaviour
                 }
             }
             
-            UpdateCounterUI();
-            UpdateHandItemVisuals(); // Keeps showing the log model if count > 0!
+            UpdateHandItemVisuals(); 
         }
     }
->>>>>>> Stashed changes
 }

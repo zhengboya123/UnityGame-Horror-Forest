@@ -3,273 +3,170 @@ using TMPro;
 
 public class PlayerInteraction : MonoBehaviour
 {
-<<<<<<< Updated upstream
-    public Transform cameraTransform; 
-    public float interactionDistance = 4.5f;
-    public TextMeshProUGUI hintTextElement; // Drag your TextMeshPro asset here
-    
-=======
+    [Header("Interaction Settings")]
     public Transform cameraTransform;
     public float interactionDistance = 4.5f;
-    public TextMeshProUGUI hintTextElement; // Drag your TextMeshPro asset here
-   
-    [Header("Drop Prefab References")]
-    public GameObject axePrefab; // Drag your ground Axe Prefab asset here!
-    public GameObject logPrefab; // Drag your ground Log Prefab asset here!
+    public TextMeshProUGUI hintTextElement; 
 
->>>>>>> Stashed changes
+    [Header("Item Prefabs to Drop")]
+    public GameObject axePrefab; 
+    public GameObject logPrefab; 
+
     private InventorySystem inventory;
+    private Terrain currentTerrain;
 
     void Start()
     {
         inventory = GetComponent<InventorySystem>();
-<<<<<<< Updated upstream
-=======
+        currentTerrain = Terrain.activeTerrain;
         ClearPrompt();
->>>>>>> Stashed changes
     }
 
     void Update()
     {
         ManageInteractionRaycast();
-<<<<<<< Updated upstream
-=======
-        HandleWarehouseZoneInputs();
-        HandleAbandonItemInput(); // Checks for [Q] presses every frame
->>>>>>> Stashed changes
+        HandleAbandonItemInput(); 
     }
 
     void ManageInteractionRaycast()
     {
-        RaycastHit hit;
-<<<<<<< Updated upstream
-        // Project a structural logic raycast forward through your center crosshair dot
-        if (Physics.Raycast(cameraTransform.position, cameraTransform.forward, out hit, interactionDistance))
+        if (Physics.Raycast(cameraTransform.position, cameraTransform.forward, out RaycastHit hit, interactionDistance))
         {
-            // Verify if your center point crosshair crosses a collider marked with the Pickup Tag
+            // 1. LOOKING AT ANY GROUND PICKUP (Both Axe and Log use this tag now)
             if (hit.collider.CompareTag("Pickup"))
             {
                 string objectName = hit.collider.gameObject.name;
 
-                // DYNAMIC STRING WRITER SYSTEM: Matches display sentences directly to items
-                if (hintTextElement != null)
+                // Check if the pickup object is an Axe
+                if (objectName.Contains("Axe"))
                 {
-                    hintTextElement.gameObject.SetActive(true);
-                    
-                    if (objectName.Contains("Axe"))
+                    if (inventory != null && !inventory.unlockedSlots[1])
                     {
-                        hintTextElement.text = "Press [E] to pick up the Axe";
-                    }
-                    else if (objectName.Contains("Log") || objectName.Contains("Wood"))
-                    {
-                        hintTextElement.text = "Press [E] to pick up the Wood Log";
-                    }
-                }
-
-                // COLLECTION DESTRUCT SEQUENCE
-                if (Input.GetKeyDown(KeyCode.E))
-                {
-                    if (objectName.Contains("Axe"))
-                    {
-                        inventory.AddItemToHotbar(1, "Axe"); // Assigns data to slot 2 (Index 1)
-                        ClearPrompt();
-                        Destroy(hit.collider.gameObject);
-                    }
-                    else if (objectName.Contains("Log") || objectName.Contains("Wood"))
-                    {
-                        inventory.AddItemToHotbar(2, "Wood_Log"); // Assigns data to slot 3 (Index 2)
-                        ClearPrompt();
-                        Destroy(hit.collider.gameObject);
-                    }
-                }
-                return; // Blocks execution falling lower while actively looking at an item
-            }
-        }
-
-        // If you look back into open space or sky, safely clear out your text overlay HUD elements
-        ClearPrompt();
-=======
-        if (Physics.Raycast(cameraTransform.position, cameraTransform.forward, out hit, interactionDistance))
-        {
-            GameObject lookTarget = hit.collider.gameObject;
-            string objectName = lookTarget.name.ToLower();
-
-            // --- CRITICAL FILTER: ONLY CHECK IF IT HAS YOUR PICKUP TAG ---
-            if (lookTarget.CompareTag("Pickup"))
-            {
-                hintTextElement.gameObject.SetActive(true);
-
-                // --- FIXED RULE 1: IT IS AN AXE PICKUP ---
-                if (objectName.Contains("axe"))
-                {
-                    hintTextElement.text = "Press [E] to pick up the Axe";
-
-                    if (Input.GetKeyDown(KeyCode.E))
-                    {
-                        inventory.AddItemToHotbar(1, "Axe");
-                        ClearPrompt();
-                        Destroy(lookTarget);
-                    }
-                }
-                // --- FIXED RULE 2: IT IS A LOOSE LOG RESOURCE ---
-                else if (objectName.Contains("log") || objectName.Contains("wood"))
-                {
-                    if (inventory.CanPickupLog())
-                    {
-                        hintTextElement.text = $"Press [E] to pick up Wood Log ({inventory.woodLogCount}/3)";
-                       
+                        SetPromptText("Press [E] to pick up Axe");
                         if (Input.GetKeyDown(KeyCode.E))
                         {
-                            inventory.AddItemToHotbar(2, "Wood_Log");
+                            inventory.AddItemToHotbar(1, "Axe");
+                            Destroy(hit.collider.gameObject);
                             ClearPrompt();
-                            Destroy(lookTarget);
                         }
                     }
                     else
                     {
-                        hintTextElement.text = "<color=red>Hands Full! Drop logs at Warehouse. Press [P] to store.</color>";
+                        SetPromptText("You already have an Axe");
+                    }
+                    return;
+                }
+                // Check if the pickup object is a Log
+                else if (objectName.Contains("Log"))
+                {
+                    if (inventory != null)
+                    {
+                        if (inventory.CanPickupLog())
+                        {
+                            SetPromptText("Press [E] to pick up Log");
+                            if (Input.GetKeyDown(KeyCode.E))
+                            {
+                                inventory.AddItemToHotbar(2, "Log");
+                                Destroy(hit.collider.gameObject);
+                                ClearPrompt();
+                            }
+                        }
+                        else
+                        {
+                            SetPromptText("Inventory Full! (Max 3 Logs)");
+                        }
+                    }
+                    return;
+                }
+            }
+
+            // 2. LOOKING AT THE WAREHOUSE DROP ZONE
+            if (hit.collider.CompareTag("WarehouseSpace") || (LogDropZone.Instance != null && LogDropZone.Instance.isPlayerInsideZone))
+            {
+                if (inventory != null && inventory.woodLogCount > 0)
+                {
+                    SetPromptText("Press [E] to store logs in warehouse");
+                    if (Input.GetKeyDown(KeyCode.E))
+                    {
+                        LogDropZone.Instance.totalLogsInWarehouse += inventory.woodLogCount;
+                        Debug.Log("Warehouse total logs: " + LogDropZone.Instance.totalLogsInWarehouse);
+                        inventory.EmptyLogsForProcessing();
+                        ClearPrompt();
+                    }
+                }
+                else if (inventory != null && inventory.woodLogCount == 0)
+                {
+                    SetPromptText("No logs in inventory to store");
+                }
+                return;
+            }
+
+            // 3. TERRAIN TREE DETECTION (Bypasses tags entirely)
+            if (hit.collider is TerrainCollider && currentTerrain != null)
+            {
+                TerrainData terrainData = currentTerrain.terrainData;
+                float searchRadius = 1.5f; 
+                Vector3 terrainPos = hit.point - currentTerrain.transform.position;
+                
+                foreach (TreeInstance tree in terrainData.treeInstances)
+                {
+                    Vector3 localTreePos = Vector3.Scale(tree.position, terrainData.size);
+                    
+                    if (Vector3.Distance(new Vector3(localTreePos.x, terrainPos.y, localTreePos.z), terrainPos) < searchRadius)
+                    {
+                        if (inventory != null && inventory.IsHoldingAxe())
+                        {
+                            SetPromptText("Press [Left Click] to chop tree");
+                        }
+                        else
+                        {
+                            SetPromptText("Requires an Axe to chop");
+                        }
+                        return; 
                     }
                 }
             }
-            else
-            {
-                ClearPrompt();
-            }
         }
-        else
-        {
-            ClearPrompt();
-        }
+
+        ClearPrompt();
     }
 
-    void HandleWarehouseZoneInputs()
-    {
-        if (LogDropZone.Instance == null || !LogDropZone.Instance.isPlayerInsideZone) return;
-
-        hintTextElement.gameObject.SetActive(true);
-        hintTextElement.text = $"<b>WAREHOUSE ZONE</b>\nStored Logs: {LogDropZone.Instance.totalLogsInWarehouse}\nYour Load: ({inventory.woodLogCount}/3)\n[P] Store 1 Log | [G] Take 1 Log";
-
-        if (Input.GetKeyDown(KeyCode.P) && inventory.woodLogCount > 0)
-        {
-            LogDropZone.Instance.totalLogsInWarehouse += 1;
-            inventory.woodLogCount -= 1;
-            
-            inventory.UpdateCounterUI();
-            inventory.UpdateHandItemVisuals();
-        }
-
-        if (Input.GetKeyDown(KeyCode.G) && LogDropZone.Instance.totalLogsInWarehouse > 0)
-        {
-            if (inventory.CanPickupLog())
-            {
-                LogDropZone.Instance.totalLogsInWarehouse--;
-                inventory.AddItemToHotbar(2, "Wood_Log");
-            }
-        }
-    }
-
-    
     void HandleAbandonItemInput()
     {
         if (!Input.GetKeyDown(KeyCode.Q)) return;
+        if (inventory == null) return;
 
-        // --- SMART HORIZONTAL SPAWN CALCULATION ---
-        Vector3 forwardHorizontal = cameraTransform.forward;
-        forwardHorizontal.y = 0;
-        forwardHorizontal.Normalize(); 
-
-        Vector3 spawnPosition = cameraTransform.position + (forwardHorizontal * 1.8f);
-        Quaternion spawnRotation = Quaternion.identity; 
-
-        // CASE 1: Active slot is 1 (The Axe) AND you actually have it unlocked
         if (inventory.currentSlot == 1 && inventory.unlockedSlots[1])
         {
-            if (axePrefab != null)
-            {
-                GameObject droppedAxe = Instantiate(axePrefab, spawnPosition, spawnRotation);
-                droppedAxe.name = "Axe_Pickup";
-                droppedAxe.tag = "Pickup"; 
-
-                Collider existingCollider = droppedAxe.GetComponentInChildren<Collider>();
-                if (existingCollider == null)
-                {
-                    BoxCollider newCollider = droppedAxe.AddComponent<BoxCollider>();
-                    newCollider.isTrigger = false;
-                }
-                else
-                {
-                    existingCollider.isTrigger = false;
-                }
-                
-                Rigidbody rb = droppedAxe.GetComponent<Rigidbody>();
-                if (rb == null) rb = droppedAxe.AddComponent<Rigidbody>();
-                
-                rb.isKinematic = false;
-                rb.useGravity = true;
-                rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
-                rb.linearVelocity = Vector3.zero;
-                rb.WakeUp();
-                
-                Physics.SyncTransforms();
-                
-                inventory.DropAxeFromInventory();
-                Debug.Log("Abandoned Axe from active slot!");
-                return; 
-            }
+            inventory.DropAxeFromInventory();
+            SpawnDroppedItem(axePrefab);
+            return;
         }
-        
-        // CASE 2: Active slot is 2 (The Logs) AND you are carrying at least 1 log
-        else if (inventory.currentSlot == 2 && inventory.unlockedSlots[2] && inventory.woodLogCount > 0)
+
+        if (inventory.currentSlot == 2 && inventory.unlockedSlots[2] && inventory.woodLogCount > 0)
         {
-            if (logPrefab != null)
-            {
-                GameObject droppedLog = Instantiate(logPrefab, spawnPosition, spawnRotation);
-                droppedLog.name = "Wood_Log";
-                droppedLog.tag = "Pickup"; 
-
-                Collider existingCollider = droppedLog.GetComponentInChildren<Collider>();
-                if (existingCollider == null)
-                {
-                    BoxCollider newCollider = droppedLog.AddComponent<BoxCollider>();
-                    newCollider.isTrigger = false;
-                }
-                else
-                {
-                    existingCollider.isTrigger = false;
-                }
-                
-                Rigidbody rb = droppedLog.GetComponent<Rigidbody>();
-                if (rb == null) rb = droppedLog.AddComponent<Rigidbody>();
-                
-                rb.isKinematic = false;
-                rb.useGravity = true;
-                rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
-                rb.linearVelocity = Vector3.zero;
-                rb.WakeUp();
-                
-                Physics.SyncTransforms();
-                
-                inventory.DropSingleLogFromInventory();
-                Debug.Log("Tossed 1 Wood Log from active slot!");
-                return;
-            }
+            inventory.DropSingleLogFromInventory();
+            SpawnDroppedItem(logPrefab);
+            return;
         }
->>>>>>> Stashed changes
+    }
+
+    void SpawnDroppedItem(GameObject itemPrefab)
+    {
+        if (itemPrefab != null)
+        {
+            Vector3 spawnPosition = transform.position + transform.forward * 1.5f + Vector3.up * 0.5f;
+            Instantiate(itemPrefab, spawnPosition, Quaternion.identity);
+        }
+    }
+
+    void SetPromptText(string text)
+    {
+        if (hintTextElement != null) hintTextElement.text = text;
     }
 
     void ClearPrompt()
     {
-<<<<<<< Updated upstream
-        if (hintTextElement != null) 
-        {
-            hintTextElement.gameObject.SetActive(false);
-            hintTextElement.text = ""; // Wipes string value safely to prevent ghost overlap boxes
-=======
-        if (hintTextElement != null)
-        {
-            hintTextElement.text = "";
-            hintTextElement.gameObject.SetActive(false);
->>>>>>> Stashed changes
-        }
+        if (hintTextElement != null) hintTextElement.text = "";
     }
 }
