@@ -2,13 +2,13 @@ using UnityEngine;
 
 public class LogDropZone : MonoBehaviour
 {
-    public static LogDropZone Instance { get; private set; }
+    public static LogDropZone Instance;
 
-    [Header("Warehouse Data")]
+    [Header("Warehouse Inventory Matrix")]
     public int totalLogsInWarehouse = 0;
     public bool isPlayerInsideZone = false;
 
-    private void Awake()
+    void Awake()
     {
         if (Instance == null)
         {

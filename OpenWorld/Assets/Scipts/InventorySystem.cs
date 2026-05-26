@@ -1,25 +1,27 @@
 using UnityEngine;
+using TMPro;
 
 public class InventorySystem : MonoBehaviour
 {
-    // Index 0 = Empty hands, Index 1 = Axe, Index 2 = Wood Log
     public bool[] unlockedSlots = new bool[3]; 
     public int currentSlot = 0;
 
     [Header("Resource Counters")]
-    public int woodLogCount = 0; // Tracks logs gathered up to 3 max
+    public int woodLogCount = 0; 
+    public TextMeshProUGUI logCounterUIElement; 
 
     [Header("Hand Model References")]
-    public GameObject visualAxeInHand; // Drag your Player Hand's child 'axe' GameObject here
-    public GameObject visualLogInHand; // Drag your Player Hand's child 'log' GameObject here
+    public GameObject visualAxeInHand; 
+    public GameObject visualLogInHand; // Set this to Wood_LogVisual in the Inspector
 
     void Start()
     {
-        unlockedSlots[0] = true;  // Bare hands are always unlocked
-        unlockedSlots[1] = false; // Locked until you press E on ground axe
-        unlockedSlots[2] = false; // Locked until you pick up a log
+        unlockedSlots[0] = true;  
+        unlockedSlots[1] = false; 
+        unlockedSlots[2] = false; 
 
         UpdateHandItemVisuals();
+        UpdateLogCounterUI();
     }
 
     void Update()
@@ -31,18 +33,16 @@ public class InventorySystem : MonoBehaviour
 
     public void AddItemToHotbar(int slotIndex, string itemType)
     {
-        unlockedSlots[slotIndex] = true; // Permanently unlocks the slot data
+        unlockedSlots[slotIndex] = true; 
         
-        if (slotIndex == 2)
+        if (itemType == "Log" || slotIndex == 2)
         {
-            woodLogCount++; // Increments log inventory count
-            if (woodLogCount > 3) woodLogCount = 3; // Keep clamped at capacity
+            woodLogCount++; 
+            if (woodLogCount > 3) woodLogCount = 3; 
         }
 
-        Debug.Log("Inventory saved! Unlocked slot: " + slotIndex + " | Item: " + itemType);
-        
-        // Force the player to equip it immediately upon pickup
         ChangeActiveSlot(slotIndex);
+        UpdateLogCounterUI();
     }
 
     public void ChangeActiveSlot(int index)
@@ -62,55 +62,54 @@ public class InventorySystem : MonoBehaviour
 
         if (visualLogInHand != null)
         {
+            // Only displays log POV when slot 3 is selected, slot is unlocked, and log count > 0
             visualLogInHand.SetActive(currentSlot == 2 && unlockedSlots[2] && woodLogCount > 0);
         }
     }
 
-    public bool CanPickupLog()
-    {
-        return woodLogCount < 3;
-    }
-
-    public bool IsHoldingAxe() 
-    { 
-        return currentSlot == 1 && unlockedSlots[1]; 
-    }
+    public bool CanPickupLog() => woodLogCount < 3;
+    
+    public bool IsHoldingAxe() => currentSlot == 1 && unlockedSlots[1]; 
 
     public void EmptyLogsForProcessing()
     {
         woodLogCount = 0;
         unlockedSlots[2] = false;
+        
+        if (currentSlot == 2) ChangeActiveSlot(0); 
+        
         UpdateHandItemVisuals();
+        UpdateLogCounterUI();
     }
 
-    // Called when dropping the Axe via [Q]
     public void DropAxeFromInventory()
     {
-        unlockedSlots[1] = false; // Lock the slot back up
-        if (currentSlot == 1)
-        {
-            ChangeActiveSlot(0); // Safely switch back to empty hands
-        }
+        unlockedSlots[1] = false; 
+        if (currentSlot == 1) ChangeActiveSlot(0); 
         UpdateHandItemVisuals();
     }
 
-    // Called when tossing 1 Log via [Q]
     public void DropSingleLogFromInventory()
     {
         if (woodLogCount > 0)
         {
             woodLogCount--;
-            
             if (woodLogCount == 0)
             {
                 unlockedSlots[2] = false;
-                if (currentSlot == 2)
-                {
-                    ChangeActiveSlot(0); // Switch to empty hands
-                }
+                if (currentSlot == 2) ChangeActiveSlot(0); 
             }
-            
             UpdateHandItemVisuals(); 
+            UpdateLogCounterUI();
+        }
+    }
+
+    public void UpdateLogCounterUI()
+    {
+        if (logCounterUIElement != null)
+        {
+            // Outputs a simple single digit count representation (e.g., "0", "1", "2")
+            logCounterUIElement.text = woodLogCount.ToString();
         }
     }
 }

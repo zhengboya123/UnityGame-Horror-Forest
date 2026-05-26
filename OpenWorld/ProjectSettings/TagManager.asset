@@ -8,6 +8,9 @@ TagManager:
   - Axe
   - Pickup
   - WarehouseSpace
+  - HouseZone
+  - HouseDoor
+  - DoorFrame
   layers:
   - Default
   - TransparentFX
@@ -15,8 +18,8 @@ TagManager:
   - 
   - Water
   - UI
-  - 
-  - 
+  - Door
+  - House
   - 
   - 
   - 
