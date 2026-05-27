@@ -17,29 +17,40 @@ public class PlayerInteraction : MonoBehaviour
     private float nextAttackAllowedTime = 0f;
     private const float singleSwingFreezeDuration = 0.8f;
 
+    [Header("Horror Visual Effects")]
+    public GameObject bloodSplashPrefab; // Drag your blood particle prefab here
     [Header("Axe Animation Hook")]
     public Animator axeAnimator; 
 
     [Header("UI Progress Assets")]
     public Image chopProgressCircle;
+    
+    [Header("Global Boat Fueling Slider (0-300)")]
+    public Slider fuelProgressBarSlider; 
+
+    [Header("Win Game State Configuration")]
+    public GameObject youWinCanvas; 
 
     [Header("Item Prefabs to Drop")]
     public GameObject axePrefab;
     public GameObject logPrefab;
     public GameObject gasBottlePrefab;
 
+    [Header("Gas Bottle Spawning Settings")]
+    public int totalGasBottlesToSpawn = 5; 
+    public Transform[] gasBottleSpawnPoints; 
+
     [Header("Day/Night & Spawning System")]
     public Light directionalLight;
     public float timeAdvancePerChop = 15.0f;
     public GameObject abnormalSpeciesPrefab;
-    public Transform[] spawnPoints;
+    public Transform[] transformSpawnPoints; 
     
     [Header("Savage Trigger Config")]
     public int treesRequiredToSpawnSavage = 20;
 
     [Header("Game Progression Stats")]
     public int totalTreesChopped = 0;
-    private bool speciesSpawned = false;
 
     private InventorySystem inventory;
     private PlayerSurvival playerSurvival;
@@ -47,12 +58,19 @@ public class PlayerInteraction : MonoBehaviour
     
     private float treeChopTimer = 0f;
     private const float totalTreeChopDuration = 5.0f;
-    private float gasPourTimer = 0f;
-    private const float singleBottlePourDuration = 10.0f;
+
+    [Header("Boat Fuel Progress (0-300)")]
+    public float currentBoatFuelAmount = 0f; 
 
     private bool isProcessingTreeCut = false;
     private TreeInstance[] originalTreesBackup;
     private HashSet<int> choppedTreeIndices = new HashSet<int>();
+    
+    private bool isGameOverSequenceActive = false; 
+    private List<GameObject> aliveSavagesList = new List<GameObject>();
+
+    // OPTIMIZATION ADDITION: Stores only the index numbers that are valid trees
+    private HashSet<int> validTreePrototypeIndexes = new HashSet<int>();
 
     void Start()
     {
@@ -63,18 +81,25 @@ public class PlayerInteraction : MonoBehaviour
         if (currentTerrain != null && currentTerrain.terrainData != null)
         {
             originalTreesBackup = (TreeInstance[])currentTerrain.terrainData.treeInstances.Clone();
+            
+            // OPTIMIZATION: Pre-calculate tree indexes once at boot to save thousands of CPU frames
+            for (int i = 0; i < currentTerrain.terrainData.treePrototypes.Length; i++)
+            {
+                GameObject prefab = currentTerrain.terrainData.treePrototypes[i].prefab;
+                if (prefab != null && prefab.name.Contains("Tree"))
+                {
+                    validTreePrototypeIndexes.Add(i);
+                }
+            }
         }
 
-        // SANITY CHECK 1: Missing reference warning
-        if (hintTextElement == null)
-        {
-            Debug.LogError("[CRITICAL UI ERROR] 'hintTextElement' is NOT assigned in the PlayerInteraction inspector! The script has nowhere to print text.");
-        }
         if (cameraTransform == null)
         {
             cameraTransform = Camera.main != null ? Camera.main.transform : null;
-            Debug.LogWarning("[Setup Warning] cameraTransform was empty, auto-assigned to Main Camera.");
         }
+
+        if (fuelProgressBarSlider != null) fuelProgressBarSlider.gameObject.SetActive(false);
+        if (youWinCanvas != null) youWinCanvas.SetActive(false); 
 
         ResetProgressVisuals();
         ClearPrompt();
@@ -87,67 +112,127 @@ public class PlayerInteraction : MonoBehaviour
         CheckInventoryLogDepletionGuard();
     }
 
+    void SpawnGasBottlesRandomly()
+    {
+        if (gasBottlePrefab == null || gasBottleSpawnPoints == null || gasBottleSpawnPoints.Length == 0) return;
+        int targetSpawnCount = Mathf.Clamp(totalGasBottlesToSpawn, 0, gasBottleSpawnPoints.Length);
+
+        List<Transform> temporaryPool = new List<Transform>(gasBottleSpawnPoints);
+        for (int i = temporaryPool.Count - 1; i > 0; i--)
+        {
+            int rnd = Random.Range(0, i + 1);
+            Transform temp = temporaryPool[i];
+            temporaryPool[i] = temporaryPool[rnd];
+            temporaryPool[rnd] = temp;
+        }
+
+        for (int i = 0; i < targetSpawnCount; i++)
+        {
+            if (temporaryPool[i] != null)
+            {
+                GameObject spawnedCan = Instantiate(gasBottlePrefab, temporaryPool[i].position, temporaryPool[i].rotation);
+                GasBottleItem bottleScript = spawnedCan.GetComponent<GasBottleItem>();
+                if (bottleScript != null) bottleScript.structuralFuelCapacity = 10f;
+            }
+        }
+    }
+
     void ManageInteractionRaycast()
     {
         string frameworkText = "";
         bool foundInteractiveTarget = false;
         bool lookingAtTreeValue = false;
-        bool pouringGasThisFrame = false;
+        bool lookingAtBoatThisFrame = false;
 
         if (cameraTransform == null) return;
 
-        // Visual Debug Ray: Red means it hit nothing, Green means it hit something!
         RaycastHit hit;
-        bool raycastHitAnything = Physics.Raycast(cameraTransform.position, cameraTransform.forward, out hit, interactionDistance);
+        int layerMask = ~LayerMask.GetMask("Player", "UI", "Ignore Raycast");
+        bool raycastHitAnything = Physics.Raycast(cameraTransform.position, cameraTransform.forward, out hit, interactionDistance, layerMask);
         
+        ObjectiveInteractable objective = null;
+
         if (raycastHitAnything)
         {
             Debug.DrawLine(cameraTransform.position, hit.point, Color.green);
             
-            // DIAGNOSTIC LOG: Print out what you are looking at to the console
-            // Debug.Log($"[Raycast Trace] Looking directly at GameObject: {hit.collider.gameObject.name} | Tag: {hit.collider.tag}");
-
-            // 1. BOAT CHECK
-            ObjectiveInteractable objective = hit.collider.GetComponentInParent<ObjectiveInteractable>()
+            objective = hit.collider.GetComponentInParent<ObjectiveInteractable>()
                 ?? hit.collider.GetComponent<ObjectiveInteractable>();
 
-            if (objective != null && objective.objectType == ObjectiveInteractable.InteractionObjectType.EscapeBoat)
+            bool isLookingAtBoat = (objective != null && objective.objectType == ObjectiveInteractable.InteractionObjectType.EscapeBoat) 
+                                   || hit.collider.CompareTag("EscapeBoat") 
+                                   || hit.collider.transform.root.CompareTag("EscapeBoat");
+
+            if (isLookingAtBoat)
             {
+                lookingAtBoatThisFrame = true;
+                
+                if (objective == null)
+                {
+                    objective = hit.collider.GetComponentInParent<ObjectiveInteractable>() 
+                                ?? hit.collider.transform.root.GetComponentInChildren<ObjectiveInteractable>();
+                }
+
                 foundInteractiveTarget = true;
                 if (playerSurvival != null)
                 {
-                    if (playerSurvival.gasTanksCollected >= playerSurvival.totalGasNeeded)
+                    if (fuelProgressBarSlider != null && !fuelProgressBarSlider.gameObject.activeSelf) 
+                    {
+                        fuelProgressBarSlider.gameObject.SetActive(true);
+                    }
+
+                    if (fuelProgressBarSlider != null)
+                    {
+                        fuelProgressBarSlider.value = Mathf.Min(currentBoatFuelAmount, 300f);
+                    }
+
+                    if (currentBoatFuelAmount >= 300f)
                     {
                         frameworkText = "Press [E] to escape the forest! (WIN)";
-                        if (Input.GetKeyDown(KeyCode.E)) objective.ProcessInteraction(playerSurvival);
+                        
+                        if (Input.GetKeyDown(KeyCode.E)) 
+                        {
+                            TriggerWinSequence();
+                        }
                     }
                     else
                     {
                         bool holdingGas = (inventory != null && inventory.currentSlot == 3 && inventory.unlockedSlots[3]);
-                        if (holdingGas)
+
+                        if (holdingGas && inventory.gasBottleFuelCapacity > 0f)
                         {
-                            frameworkText = $"Hold [P] to pour Gasoline ({gasPourTimer:F1}s / 10s) | Progress: {playerSurvival.gasTanksCollected}/{playerSurvival.totalGasNeeded}";
-                            if (Input.GetKey(KeyCode.P))
+                            frameworkText = $"Hold [Left Click] to pour Gasoline | Fuel left in tank: {inventory.gasBottleFuelCapacity:F1}s";
+                            
+                            if (Input.GetMouseButton(0))
                             {
-                                pouringGasThisFrame = true;
-                                gasPourTimer += Time.deltaTime;
-                                if (chopProgressCircle != null)
+                                float fuelToPour = 10f * Time.deltaTime;
+
+                                if (currentBoatFuelAmount + fuelToPour > 300f)
                                 {
-                                    chopProgressCircle.gameObject.SetActive(true);
-                                    chopProgressCircle.fillAmount = gasPourTimer / singleBottlePourDuration;
+                                    fuelToPour = 300f - currentBoatFuelAmount;
                                 }
-                                if (gasPourTimer >= singleBottlePourDuration)
+
+                                if (fuelToPour > 0f)
                                 {
-                                    gasPourTimer = 0f;
-                                    ResetProgressVisuals();
-                                    playerSurvival.CollectGasTank();
-                                    if (inventory != null) { inventory.unlockedSlots[3] = false; inventory.currentSlot = 0; }
+                                    currentBoatFuelAmount += fuelToPour;
+                                    inventory.gasBottleFuelCapacity -= Time.deltaTime;
+                                }
+
+                                if (inventory.gasBottleFuelCapacity <= 0f)
+                                {
+                                    inventory.gasBottleFuelCapacity = 0f;
+                                    playerSurvival.CollectGasTank(); 
+                                    if (inventory != null) { inventory.EmptyGasCan(); } 
                                 }
                             }
                         }
+                        else if (holdingGas && inventory.gasBottleFuelCapacity <= 0f)
+                        {
+                            frameworkText = "This Gas Bottle is empty!";
+                        }
                         else
                         {
-                            frameworkText = $"Boat needs Fuel ({playerSurvival.gasTanksCollected}/{playerSurvival.totalGasNeeded} poured). Equip a Gas Bottle!";
+                            frameworkText = "Boat needs Fuel. Equip Gas Bottle from Slot 4!";
                         }
                     }
                 }
@@ -173,10 +258,15 @@ public class PlayerInteraction : MonoBehaviour
             PickupItem pickupComponent = hit.collider.GetComponentInParent<PickupItem>()
                 ?? hit.collider.GetComponent<PickupItem>();
 
-            if (pickupComponent != null && !foundInteractiveTarget)
+            bool isGasBottleTarget = hit.collider.CompareTag("GasBottle") 
+                                     || hit.collider.transform.root.CompareTag("GasBottle")
+                                     || hit.collider.name.Contains("Gas");
+
+            if ((pickupComponent != null || isGasBottleTarget) && !foundInteractiveTarget)
             {
                 foundInteractiveTarget = true;
-                if (pickupComponent.itemType == PickupItem.ItemType.Axe)
+
+                if (pickupComponent != null && pickupComponent.itemType == PickupItem.ItemType.Axe)
                 {
                     if (inventory != null && !inventory.unlockedSlots[1])
                     {
@@ -185,7 +275,7 @@ public class PlayerInteraction : MonoBehaviour
                     }
                     else frameworkText = "You already have an Axe";
                 }
-                else if (pickupComponent.itemType == PickupItem.ItemType.Log)
+                else if (pickupComponent != null && pickupComponent.itemType == PickupItem.ItemType.Log)
                 {
                     if (inventory != null)
                     {
@@ -197,59 +287,124 @@ public class PlayerInteraction : MonoBehaviour
                         else frameworkText = "<color=red>Inventory Full! Max 3 Logs</color>";
                     }
                 }
-                else if (pickupComponent.name.Contains("Gas") || pickupComponent.CompareTag("GasBottle"))
+                else if (isGasBottleTarget)
                 {
                     if (inventory != null)
                     {
                         if (!inventory.unlockedSlots[3])
                         {
-                            frameworkText = "Press [E] to collect Gas Bottle (Max 1)";
-                            if (Input.GetKeyDown(KeyCode.E)) { inventory.unlockedSlots[3] = true; inventory.currentSlot = 3; Destroy(pickupComponent.gameObject); }
+                            GameObject targetedRootInstance = pickupComponent != null ? pickupComponent.gameObject : hit.collider.gameObject;
+                            if (targetedRootInstance.transform.parent != null && targetedRootInstance.transform.root.CompareTag("GasBottle"))
+                            {
+                                targetedRootInstance = targetedRootInstance.transform.root.gameObject;
+                            }
+
+                            GasBottleItem physicalGasComponent = targetedRootInstance.GetComponentInChildren<GasBottleItem>();
+                            float remainingGasUnits = (physicalGasComponent != null) ? physicalGasComponent.structuralFuelCapacity : 10f;
+                            int roundedPercentage = Mathf.CeilToInt((remainingGasUnits / 10f) * 100f);
+
+                            frameworkText = $"Press [E] to collect Gas Bottle ({roundedPercentage}%)";
+                            
+                            if (Input.GetKeyDown(KeyCode.E)) 
+                            { 
+                                inventory.AddItemToHotbar(3, "GasBottle", remainingGasUnits); 
+                                Destroy(targetedRootInstance); 
+                            }
                         }
                         else frameworkText = "<color=yellow>Already carrying a Gas Bottle!</color>";
                     }
                 }
             }
 
-            // 4. WAREHOUSE CHECK
+            // 4. WAREHOUSE CHECK (MISSION COUNTING LOG SYSTEM)
             if (hit.collider.CompareTag("WarehouseSpace") && !foundInteractiveTarget)
             {
                 foundInteractiveTarget = true;
-                LogDropZone dropZone = hit.collider.GetComponent<LogDropZone>();
-                if (dropZone != null)
+                
+                int currentGoal = DayNightCycleManager.Instance.activeLogsRequired;
+                int currentCount = DayNightCycleManager.Instance.currentLogsStoredCount;
+
+                frameworkText = $"Warehouse Goal: {currentCount}/{currentGoal} | [P] Store Log Progress";
+                
+                if (Input.GetKeyDown(KeyCode.P) && inventory != null && inventory.woodLogCount > 0)
                 {
-                    int currentStored = dropZone.totalLogsInWarehouse;
-                    frameworkText = $"Warehouse: {currentStored}/50 | [P] Store Log | [G] Get Log";
-                    if (Input.GetKeyDown(KeyCode.P) && currentStored < 50 && inventory != null && inventory.woodLogCount > 0)
-                    {
-                        dropZone.totalLogsInWarehouse++; inventory.woodLogCount--; inventory.UpdateLogCounterUI(); CheckInventoryLogDepletionGuard();
-                    }
-                    if (Input.GetKeyDown(KeyCode.G) && currentStored > 0 && inventory != null && inventory.CanPickupLog())
-                    {
-                        dropZone.totalLogsInWarehouse--; inventory.AddItemToHotbar(2, "Log");
-                    }
+                    DayNightCycleManager.Instance.currentLogsStoredCount++;
+                    inventory.woodLogCount--; 
+                    inventory.UpdateLogCounterUI(); 
+                    CheckInventoryLogDepletionGuard();
+                    
+                    DayNightCycleManager.Instance.UpdateTopLeftMissionUI();
+                    DayNightCycleManager.Instance.UpdateWarehouseVisualDisplay();
                 }
             }
 
-            // 5. TERRAIN CHOPPING TREE CHECK
-            Terrain terrain = hit.collider.GetComponent<Terrain>();
+            // 5. BED INTERACTION SYSTEM CHECK
+            if (hit.collider.CompareTag("Bed") || hit.collider.name.Contains("Bed"))
+            {
+                foundInteractiveTarget = true;
+                
+                if (!DayNightCycleManager.Instance.isNightTimeActive)
+                {
+                    frameworkText = "You can only sleep at nighttime!";
+                }
+                else if (DayNightCycleManager.Instance.CanPlayerSleepOvernight())
+                {
+                    frameworkText = "Press [E] to sleep through the night safely";
+                    if (Input.GetKeyDown(KeyCode.E))
+                    {
+                        DayNightCycleManager.Instance.AdvanceToNextDaySequence(hit.collider.transform);
+                    }
+                }
+                else
+                {
+                    frameworkText = $"<color=red>{DayNightCycleManager.Instance.GetMissingRequirementsString()}</color>";
+                }
+            }
+
+            // 6. FIXED TERRAIN CHOPPING TREE CHECK
+            // Use GetComponentInParent to safely find the Terrain script regardless of compound colliders.
+            Terrain terrain = hit.collider.GetComponentInParent<Terrain>();
             if (terrain != null && terrain.terrainData != null && !foundInteractiveTarget && !isProcessingTreeCut)
             {
                 TerrainData terrainData = terrain.terrainData;
-                float maxChopRadius = 3.5f;
-                float closestDistance = float.MaxValue;
+                
+                // ADJUST THESE FOR YOUR PRECISION PREFERENCE:
+                float maxCrosshairRadius = 1.8f; // Distance threshold on the horizontal XZ plane to the trunk
+                float maxPlayerReach = 4.0f;     // Absolute max physical reach distance
+                
+                float closestAimDistance = float.MaxValue;
                 int targetedTreeIndex = -1;
 
                 TreeInstance[] trees = terrainData.treeInstances;
                 for (int i = 0; i < trees.Length; i++)
                 {
                     if (choppedTreeIndices.Contains(i) || trees[i].position.y < -2f || trees[i].widthScale <= 0.01f) continue;
+
+                    if (!validTreePrototypeIndexes.Contains(trees[i].prototypeIndex)) continue;
+
+                    // Calculate world position of this tree instance
                     Vector3 treeWorldPos = Vector3.Scale(trees[i].position, terrainData.size) + terrain.transform.position;
-                    float distance = Vector3.Distance(hit.point, treeWorldPos);
-                    if (distance < closestDistance) { closestDistance = distance; targetedTreeIndex = i; }
+                    
+                    // We check distance entirely on the X-Z plane (ignoring height differences) 
+                    // This guarantees that looking up at the high trunk still registers accurately!
+                    Vector3 flatHitPoint = new Vector3(hit.point.x, 0, hit.point.z);
+                    Vector3 flatTreePos = new Vector3(treeWorldPos.x, 0, treeWorldPos.z);
+                    float crosshairDistance = Vector3.Distance(flatHitPoint, flatTreePos);
+                    
+                    // Physical check: Ensure player is standing near the trunk
+                    float playerDistance = Vector3.Distance(transform.position, treeWorldPos);
+
+                    if (crosshairDistance <= maxCrosshairRadius && playerDistance <= maxPlayerReach)
+                    {
+                        if (crosshairDistance < closestAimDistance)
+                        {
+                            closestAimDistance = crosshairDistance;
+                            targetedTreeIndex = i;
+                        }
+                    }
                 }
 
-                if (targetedTreeIndex != -1 && closestDistance <= maxChopRadius)
+                if (targetedTreeIndex != -1)
                 {
                     foundInteractiveTarget = true;
                     lookingAtTreeValue = true;
@@ -272,34 +427,119 @@ public class PlayerInteraction : MonoBehaviour
                 }
             }
         }
-        else
+
+        if (!lookingAtBoatThisFrame)
         {
-            // If the raycast completely missed everything, draw a long red line out from center camera
-            Debug.DrawRay(cameraTransform.position, cameraTransform.forward * interactionDistance, Color.red);
+            if (fuelProgressBarSlider != null && fuelProgressBarSlider.gameObject.activeSelf)
+            {
+                fuelProgressBarSlider.gameObject.SetActive(false);
+            }
         }
 
-        // --- ENGINE HOOKS ---
-        if (!pouringGasThisFrame) gasPourTimer = 0f;
-        if ((!lookingAtTreeValue || !Input.GetMouseButton(0)) && !pouringGasThisFrame)
+        if (!lookingAtTreeValue || !Input.GetMouseButton(0))
         {
             ResetProgressVisuals();
             if (axeAnimator != null) axeAnimator.SetBool("isChopping", false);
         }
-        if (Input.GetMouseButtonDown(0) && Time.time >= nextAttackAllowedTime && !lookingAtTreeValue)
+
+        if (Input.GetMouseButtonDown(0) && Time.time >= nextAttackAllowedTime && !lookingAtTreeValue && !lookingAtBoatThisFrame)
         {
             if (inventory != null && inventory.IsHoldingAxe()) ExecuteSingleSwingAttack();
         }
 
-        // --- FINAL RENDERING ZONE ---
         if (foundInteractiveTarget && !string.IsNullOrEmpty(frameworkText)) 
         {
-            // DIAGNOSTIC LOG: Print out the text assigned to the UI elements
-            Debug.Log($"[UI Output Success] Displaying text: '{frameworkText}'");
             SetPromptText(frameworkText);
         }
         else 
         {
             ClearPrompt();
+        }
+    }
+
+    public void TriggerWinSequence()
+    {
+        if (isGameOverSequenceActive) return; 
+        isGameOverSequenceActive = true;
+
+        ClearPrompt();
+        
+        if (youWinCanvas != null)
+        {
+            youWinCanvas.SetActive(true);
+            Time.timeScale = 0f; 
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+            
+            SetControllersState(false);
+
+            if (playerSurvival != null)
+            {
+                playerSurvival.hasWonGame = true;
+                playerSurvival.enabled = false;
+            }
+        }
+    }
+
+    public void MaintainSavagePopulationCount()
+    {
+        if (abnormalSpeciesPrefab == null || transformSpawnPoints == null || transformSpawnPoints.Length == 0) return;
+
+        aliveSavagesList.RemoveAll(item => item == null);
+        int currentMaxAllowed = DayNightCycleManager.Instance.activeSavageMaxSimultaneous;
+
+        Debug.Log($"[SPAWNER] Active savages: {aliveSavagesList.Count} / Target: {currentMaxAllowed}");
+
+        while (aliveSavagesList.Count < currentMaxAllowed)
+        {
+            Transform randomPoint = transformSpawnPoints[Random.Range(0, transformSpawnPoints.Length)];
+            if (randomPoint != null)
+            {
+                GameObject newSavage = Instantiate(abnormalSpeciesPrefab, randomPoint.position, randomPoint.rotation);
+                aliveSavagesList.Add(newSavage);
+                Debug.Log($"[SPAWNER] Spawned new savage at {randomPoint.name}.");
+            }
+        }
+    }
+
+    public void ResetEnvironmentToMorning()
+    {
+        totalTreesChopped = 0; 
+        aliveSavagesList.Clear(); 
+        if (directionalLight != null)
+        {
+            directionalLight.transform.rotation = Quaternion.Euler(50f, -30f, 0f); 
+            directionalLight.intensity = 1.0f;
+        }
+        RenderSettings.ambientIntensity = 1.0f;
+        RenderSettings.ambientSkyColor = new Color(0.2f, 0.2f, 0.2f); 
+        DynamicGI.UpdateEnvironment();
+    }
+
+    public void SetControllersState(bool state)
+    {
+        this.enabled = state;
+        DisableComponentOnTarget(this.gameObject, "FirstPersonController", state);
+        DisableComponentOnTarget(this.gameObject, "PlayerMovement", state);
+        DisableComponentOnTarget(this.gameObject, "CharacterController", state);
+
+        if (cameraTransform != null)
+        {
+            DisableComponentOnTarget(cameraTransform.gameObject, "MouseLook", state);
+            DisableComponentOnTarget(cameraTransform.gameObject, "CameraController", state);
+        }
+        
+        Cursor.lockState = state ? CursorLockMode.Locked : CursorLockMode.None;
+        Cursor.visible = !state;
+    }
+
+    private void DisableComponentOnTarget(GameObject targetObj, string typeName, bool state)
+    {
+        if (targetObj == null) return;
+        Component targetComp = targetObj.GetComponent(typeName);
+        if (targetComp != null && targetComp is MonoBehaviour)
+        {
+            ((MonoBehaviour)targetComp).enabled = state;
         }
     }
 
@@ -314,8 +554,21 @@ public class PlayerInteraction : MonoBehaviour
             Vector3 directionToTarget = (target.transform.position - transform.position).normalized;
             if (Vector3.Angle(transform.forward, directionToTarget) <= (attackAngle / 2f))
             {
-                SavageAI savage = target.GetComponentInChildren<SavageAI>() ?? target.GetComponentInParent<SavageAI>() ?? target.GetComponent<SavageAI>();
-                if (savage != null) savage.TakeDamage(15f);
+                SavageAI savage = target.transform.root.GetComponentInChildren<SavageAI>() 
+                               ?? target.GetComponentInParent<SavageAI>() 
+                               ?? target.GetComponentInChildren<SavageAI>() 
+                               ?? target.GetComponent<SavageAI>();
+
+                if (savage != null) 
+                {
+                    savage.TakeDamage(15f);
+
+                    if (bloodSplashPrefab != null)
+                    {
+                        GameObject strikeSplash = Instantiate(bloodSplashPrefab, target.bounds.center, Quaternion.identity);
+                        Destroy(strikeSplash, 2.0f);
+                    }
+                }
             }
         }
     }
@@ -345,6 +598,13 @@ public class PlayerInteraction : MonoBehaviour
             if (tc != null) { tc.enabled = false; Physics.SyncTransforms(); tc.enabled = true; }
 
             totalTreesChopped++;
+
+            if (totalTreesChopped == treesRequiredToSpawnSavage && bloodSplashPrefab != null)
+            {
+                GameObject treeBloodSplash = Instantiate(bloodSplashPrefab, finalSpawnPos + Vector3.up * 1.5f, Quaternion.identity);
+                Destroy(treeBloodSplash, 3.0f);
+            }
+
             ProgressTimeAndDarkenSky();
             CheckAbnormalSpeciesTrigger();
             if (logPrefab != null) Instantiate(logPrefab, finalSpawnPos + Vector3.up * 1.0f, Quaternion.identity);
@@ -380,24 +640,29 @@ public class PlayerInteraction : MonoBehaviour
         }
     }
 
-    void CheckAbnormalSpeciesTrigger() { if (totalTreesChopped >= treesRequiredToSpawnSavage && !speciesSpawned) { speciesSpawned = true; SpawnAbnormalEntities(); } }
-    void SpawnAbnormalEntities() { if (abnormalSpeciesPrefab == null) return; if (spawnPoints != null && spawnPoints.Length > 0) { foreach (Transform sp in spawnPoints) { if (sp != null) Instantiate(abnormalSpeciesPrefab, sp.position, sp.rotation); } } }
+    void CheckAbnormalSpeciesTrigger() 
+    { 
+        if (totalTreesChopped >= treesRequiredToSpawnSavage && !DayNightCycleManager.Instance.isNightTimeActive) 
+        { 
+            DayNightCycleManager.Instance.isNightTimeActive = true;
+            DayNightCycleManager.Instance.UpdateTopLeftMissionUI();
+            
+            MaintainSavagePopulationCount();
 
-    void SetPromptText(string text)
+            if (DayNightCycleManager.Instance.currentDayNumber == 1)
+            {
+                SpawnGasBottlesRandomly();
+            }
+            DayNightCycleManager.Instance.ToggleGasBottlesVisibility(true);
+        } 
+    }
+
+    public void SetPromptText(string text)
     {
         if (hintTextElement != null)
         {
-            // 1. Force the GameObject itself to be fully active in the scene hierarchy
-            if (!hintTextElement.gameObject.activeSelf)
-            {
-                hintTextElement.gameObject.SetActive(true);
-            }
-
-            // 2. Assign the string data directly to the text mesh property
+            if (!hintTextElement.gameObject.activeSelf) hintTextElement.gameObject.SetActive(true);
             hintTextElement.text = text;
-
-            // 3. FORCE UNITY GRAPHICS ENGINE TO REDRAW THE CANVAS TEXT INSTANTLY!
-            // This completely bypasses any delayed layout or font mesh initialization bugs.
             hintTextElement.ForceMeshUpdate();
         }
     }
@@ -407,8 +672,6 @@ public class PlayerInteraction : MonoBehaviour
         if (hintTextElement != null)
         {
             hintTextElement.text = "";
-            
-            // Ensure the canvas layout handles the blank update accurately
             hintTextElement.ForceMeshUpdate();
         }
     }
@@ -418,14 +681,28 @@ public class PlayerInteraction : MonoBehaviour
         if (!Input.GetKeyDown(KeyCode.Q) || inventory == null) return;
         if (inventory.currentSlot == 1 && inventory.unlockedSlots[1]) { inventory.DropAxeFromInventory(); SpawnDroppedItem(axePrefab); }
         else if (inventory.currentSlot == 2 && inventory.unlockedSlots[2] && inventory.woodLogCount > 0) { inventory.DropSingleLogFromInventory(); SpawnDroppedItem(logPrefab); }
-        else if (inventory.currentSlot == 3 && inventory.unlockedSlots[3]) { inventory.unlockedSlots[3] = false; inventory.currentSlot = 0; SpawnDroppedItem(gasBottlePrefab); }
+        else if (inventory.currentSlot == 3 && inventory.unlockedSlots[3]) 
+        { 
+            float remainingFuelToInject = inventory.gasBottleFuelCapacity;
+            inventory.DropGasCanFromInventory(); 
+            SpawnDroppedItem(gasBottlePrefab, remainingFuelToInject); 
+        }
     }
 
-    void SpawnDroppedItem(GameObject itemPrefab)
+    void SpawnDroppedItem(GameObject itemPrefab) => SpawnDroppedItem(itemPrefab, 0f);
+
+    void SpawnDroppedItem(GameObject itemPrefab, float fuelDataToPreserve)
     {
         if (itemPrefab == null) return;
         Vector3 spawnPosition = transform.position + transform.forward * 1.5f + Vector3.up * 1.2f;
         GameObject spawnedItem = Instantiate(itemPrefab, spawnPosition, Quaternion.identity);
+        
+        GasBottleItem physicalGasComponent = spawnedItem.GetComponentInChildren<GasBottleItem>() ?? spawnedItem.AddComponent<GasBottleItem>();
+        if (physicalGasComponent != null && itemPrefab == gasBottlePrefab)
+        {
+            physicalGasComponent.structuralFuelCapacity = fuelDataToPreserve;
+        }
+
         foreach (Collider col in spawnedItem.GetComponentsInChildren<Collider>()) { col.isTrigger = false; col.enabled = true; }
         Rigidbody rbTemp = spawnedItem.GetComponent<Rigidbody>() ?? spawnedItem.AddComponent<Rigidbody>();
         rbTemp.isKinematic = false; rbTemp.useGravity = true; rbTemp.collisionDetectionMode = CollisionDetectionMode.Continuous;

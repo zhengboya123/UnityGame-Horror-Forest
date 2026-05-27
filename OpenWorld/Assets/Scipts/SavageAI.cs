@@ -3,103 +3,131 @@ using UnityEngine.AI;
 
 public class SavageAI : MonoBehaviour
 {
-    [Header("Savage Attributes")]
-    public float health = 50f;
-    public float damage = 15f;
-    public float attackRate = 1.5f;
-    
-    [Tooltip("Extra melee range buffer outside of agent stopping distance")]
-    public float attackRangeBuffer = 1.5f; 
+    [Header("Savage Health Settings")]
+    public float maxHealth = 50f;
+    public float currentHealth = 50f;
 
-    private Transform playerTarget;
-    private PlayerSurvival targetSurvival;
+    [Header("Movement & Pathfinding")]
+    public float chaseSpeed = 4.5f;
+    public float stoppingDistance = 1.5f;
+    
+    [Header("Attack Properties")]
+    public float damageAmount = 10f;
+    public float attackCooldown = 1.5f;
+    [Tooltip("How close the savage needs to be to hit the player")]
+    public float attackRange = 2.0f; 
+    private float nextAttackTime = 0f;
+
+    [Header("Animations (Optional)")]
+    public Animator savageAnimator;
+
     private NavMeshAgent agent;
-    private float nextAttackAllowedTime = 0f;
+    private Transform playerTransform;
+    private PlayerSurvival playerSurvival;
+    private bool isDead = false;
 
     void Start()
     {
+        currentHealth = maxHealth;
         agent = GetComponent<NavMeshAgent>();
-        FindPlayerReferences();
+
+        if (agent != null)
+        {
+            agent.speed = chaseSpeed;
+            agent.stoppingDistance = stoppingDistance;
+        }
+        
+        PlayerSurvival player = Object.FindFirstObjectByType<PlayerSurvival>();
+        if (player != null)
+        {
+            playerTransform = player.transform;
+            playerSurvival = player;
+        }
     }
 
     void Update()
     {
-        // Fallback: If references were missed at spawn, try to acquire them again safely
-        if (playerTarget == null || targetSurvival == null)
+        if (isDead || playerTransform == null) return;
+
+        // 1. Pathfind towards player
+        if (agent != null && agent.isOnNavMesh)
         {
-            FindPlayerReferences();
-            if (playerTarget == null || targetSurvival == null) return; // Skip frame if player doesn't exist
+            agent.SetDestination(playerTransform.position);
         }
 
-        if (agent == null || !agent.isOnNavMesh) return;
-
-        // Pathfind directly towards the player's position
-        agent.SetDestination(playerTarget.position);
-
-        // Check distance to see if enemy is within hitting range
-        float distanceToPlayer = Vector3.Distance(transform.position, playerTarget.position);
-        
-        // Dynamic attack range calculation that handles default stopping distances reliably
-        float maxAttackDistance = Mathf.Max(agent.stoppingDistance, 0.5f) + attackRangeBuffer;
-
-        if (distanceToPlayer <= maxAttackDistance)
+        // 2. Handle animator speeds
+        if (savageAnimator != null && agent != null)
         {
-            // Only strike if the player is exposed outside of their base
-            if (!targetSurvival.isInsideHouse)
-            {
-                AttemptDirectPlayerAttack();
-            }
-            else
-            {
-                Debug.Log($"[{gameObject.name}] Player is safe inside house. Standing guard.");
-            }
+            savageAnimator.SetFloat("Speed", agent.velocity.magnitude);
+        }
+
+        // FIX: Pure proximity-based attack loop. Eliminates broken physics engine issues completely!
+        float distanceToPlayer = Vector3.Distance(transform.position, playerTransform.position);
+        if (distanceToPlayer <= attackRange && Time.time >= nextAttackTime)
+        {
+            ExecuteAttackOnPlayer();
         }
     }
 
-    void FindPlayerReferences()
+    private void ExecuteAttackOnPlayer()
     {
-        GameObject playerObj = GameObject.FindGameObjectWithTag("Player");
-        if (playerObj != null)
+        if (playerSurvival != null && !playerSurvival.hasWonGame)
         {
-            playerTarget = playerObj.transform;
-            targetSurvival = playerObj.GetComponent<PlayerSurvival>() 
-                             ?? playerObj.GetComponentInParent<PlayerSurvival>() 
-                             ?? playerObj.GetComponentInChildren<PlayerSurvival>();
+            nextAttackTime = Time.time + attackCooldown;
             
-            if (targetSurvival == null)
-            {
-                Debug.LogError($"[{gameObject.name}] Found object with 'Player' tag, but it is missing the PlayerSurvival component script!");
-            }
-        }
-    }
+            Debug.Log($"[SAVAGE ATTACK] {gameObject.name} hit the player for {damageAmount} damage!");
+            playerSurvival.TakeDamage(damageAmount);
 
-    void AttemptDirectPlayerAttack()
-    {
-        if (Time.time >= nextAttackAllowedTime)
-        {
-            nextAttackAllowedTime = Time.time + attackRate;
-            
-            Debug.LogWarning($"💥 [{gameObject.name}] Attacking player! Dealing {damage} damage.");
-            targetSurvival.TakeDamage(damage);
+            if (savageAnimator != null)
+            {
+                savageAnimator.SetTrigger("Attack");
+            }
         }
     }
 
     public void TakeDamage(float amount)
     {
-        health -= amount;
-        Debug.Log($"[{gameObject.name}] Took {amount} damage! Remaining Health: {health}");
+        if (isDead) return;
 
-        if (health <= 0)
+        currentHealth -= amount;
+        Debug.Log($"[SAVAGE] {gameObject.name} took {amount} damage. Health remaining: {currentHealth}");
+
+        if (savageAnimator != null)
         {
-            Debug.Log($"💀 [{gameObject.name}] Defeated!");
-            
-            // Unregister from tracker if your wave script utilizes registration trackers
-            if (SavageWaveTracker.Instance != null)
-            {
-                // Put any wave clean-up hook calls here if needed!
-            }
-
-            Destroy(gameObject);
+            savageAnimator.SetTrigger("Hit");
         }
+
+        if (currentHealth <= 0f)
+        {
+            Die();
+        }
+    }
+
+    private void Die()
+    {
+        if (isDead) return;
+        isDead = true;
+
+        Debug.Log($"[SAVAGE] {gameObject.name} died. Notifying DayNightCycleManager...");
+
+        if (DayNightCycleManager.Instance != null)
+        {
+            DayNightCycleManager.Instance.OnSavageKilled();
+        }
+
+        if (agent != null) agent.enabled = false;
+        
+        Collider[] allColliders = GetComponentsInChildren<Collider>();
+        foreach (Collider col in allColliders)
+        {
+            col.enabled = false;
+        }
+
+        if (savageAnimator != null)
+        {
+            savageAnimator.SetTrigger("Die");
+        }
+
+        Destroy(gameObject, 0.5f); 
     }
 }

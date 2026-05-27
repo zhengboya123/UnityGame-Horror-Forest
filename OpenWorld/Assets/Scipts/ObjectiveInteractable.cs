@@ -1,5 +1,5 @@
 using UnityEngine;
-using UnityEngine.SceneManagement; // FIXED: This line clears the CS0103 compile error!
+using UnityEngine.SceneManagement;
 
 public class ObjectiveInteractable : MonoBehaviour
 {
@@ -13,10 +13,9 @@ public class ObjectiveInteractable : MonoBehaviour
         {
             if (survival.gasTanksCollected >= survival.totalGasNeeded)
             {
-                // Trigger the victory escape loop!
+                // Trigger the victory escape loop panel securely
                 survival.EscapeSuccessVictory();
             }
         }
-        // Keep your regular GasTank pick up loop block below if you have one...
     }
 }

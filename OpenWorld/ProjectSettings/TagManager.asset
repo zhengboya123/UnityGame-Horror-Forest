@@ -11,6 +11,9 @@ TagManager:
   - HouseZone
   - HouseDoor
   - DoorFrame
+  - GasBottle
+  - EscapeBoat
+  - Bed
   layers:
   - Default
   - TransparentFX

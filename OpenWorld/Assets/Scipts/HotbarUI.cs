@@ -3,7 +3,7 @@ using UnityEngine;
 public class HotbarUI : MonoBehaviour
 {
     public InventorySystem playerInventory; // Reference to our main inventory tracking component
-    public RectTransform[] slotTransforms;  // Array to hold the positions of Slot1, Slot2, Slot3
+    public RectTransform[] slotTransforms;  // Holds positions for Slot1, Slot2, Slot3, Slot4
     public RectTransform selectorBox;       // Reference to our moving white selection box
 
     void Update()
@@ -13,10 +13,10 @@ public class HotbarUI : MonoBehaviour
         {
             int currentActiveIndex = playerInventory.currentSlot;
             
-            // Check to ensure the slot number matches our visual array limit
+            // FIXED: Dynamically opens the limit boundary to read any slot up to your full array length!
             if (currentActiveIndex >= 0 && currentActiveIndex < slotTransforms.Length)
             {
-                // Force the white SelectorBox to copy the exact interface coordinates of our active slot
+                // Force the white SelectorBox to jump right to the active slot's visual position
                 selectorBox.anchoredPosition = slotTransforms[currentActiveIndex].anchoredPosition;
             }
         }

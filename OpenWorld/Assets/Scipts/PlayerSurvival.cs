@@ -1,99 +1,137 @@
 using UnityEngine;
 using UnityEngine.UI;
-using TMPro;
+using System.Collections;
 
 public class PlayerSurvival : MonoBehaviour
 {
-    [Header("Health Settings")]
-    public float maxHealth = 100f;
-    public float currentHealth;
-    public Slider healthBarSlider; 
-
-    [Header("Game UI Canvases")]
-    public GameObject gameOverCanvas; 
-    public GameObject victoryCanvas; // Add your Escape Win UI panel here!
-
-    [Header("Game Objectives")]
+    [Header("Survival Settings")]
     public int gasTanksCollected = 0;
-    public int totalGasNeeded = 3; // Changed to 3 bottles max requirement!
-    public InteractableDoor actualDoorComponent; 
+    public int totalGasNeeded = 3;
 
-    [HideInInspector]
-    public bool isInsideHouse = false;
-    private bool isGameFinished = false;
+    [Header("Health System UI")]
+    public Slider healthSlider; 
+    public float maxHealth = 100f;
+    public float currentHealth = 100f;
+
+    [Header("POV Damage Flash Configuration")]
+    [Tooltip("Drag your DamageFlashCanvas here")]
+    public GameObject damageFlashCanvas;
+    [Tooltip("How long the blood stays on screen before fading completely")]
+    public float flashDuration = 1.5f;
+    private Coroutine flashCoroutine;
+
+    [Header("Game Over State Configuration")]
+    public GameObject youLoseCanvas;
+
+    [Header("Interactable Objects Route")]
+    public InteractableDoor actualDoorComponent;
+
+    [HideInInspector] public bool isInsideHouse = false;
+    [HideInInspector] public bool hasWonGame = false; 
+
+    private PlayerInteraction interactionSystem;
+    private bool isDead = false;
 
     void Start()
     {
-        currentHealth = maxHealth;
+        interactionSystem = GetComponent<PlayerInteraction>();
         
-        if (healthBarSlider != null)
-        {
-            healthBarSlider.minValue = 0f;
-            healthBarSlider.maxValue = maxHealth;
-        }
-        
-        UpdateHealthUI();
+        if (youLoseCanvas != null) youLoseCanvas.SetActive(false);
+        if (damageFlashCanvas != null) damageFlashCanvas.SetActive(false);
 
-        if (gameOverCanvas != null) gameOverCanvas.SetActive(false);
-        if (victoryCanvas != null) victoryCanvas.SetActive(false);
+        if (healthSlider != null)
+        {
+            healthSlider.maxValue = maxHealth;
+            healthSlider.value = currentHealth;
+        }
     }
 
     public void CollectGasTank()
     {
         gasTanksCollected++;
-        Debug.LogWarning($"[Gas Poured] Streamed 10s bottle completely! Fuel state: {gasTanksCollected}/{totalGasNeeded}");
-    }
-
-    public void EscapeSuccessVictory()
-    {
-        if (isGameFinished) return;
-        isGameFinished = true;
-
-        Debug.LogWarning("VICTORY! You escaped the forest alive!");
-
-        if (victoryCanvas != null)
-        {
-            victoryCanvas.SetActive(true);
-        }
-
-        // Freeze world space completely
-        Time.timeScale = 0f;
-        Cursor.lockState = CursorLockMode.None;
-        Cursor.visible = true;
+        Debug.Log($"Gas Bottles filled count metrics: {gasTanksCollected}/{totalGasNeeded}");
     }
 
     public void TakeDamage(float amount)
     {
-        if (isGameFinished) return;
-        if (isInsideHouse) return;
+        if (hasWonGame || isDead) return; 
 
         currentHealth -= amount;
         currentHealth = Mathf.Clamp(currentHealth, 0f, maxHealth);
-        UpdateHealthUI();
+
+        if (healthSlider != null)
+        {
+            healthSlider.value = currentHealth;
+        }
+
+        // Trigger the Blood POV Effect
+        if (damageFlashCanvas != null && gameObject.activeInHierarchy)
+        {
+            if (flashCoroutine != null) StopCoroutine(flashCoroutine);
+            flashCoroutine = StartCoroutine(FlashBloodOverlayRoutine());
+        }
+
+        Debug.Log($"Player took {amount} damage! Current Health: {currentHealth}");
 
         if (currentHealth <= 0f)
         {
-            TriggerGameOver();
+            TriggerLoseSequence();
         }
     }
 
-    void UpdateHealthUI()
+    private IEnumerator FlashBloodOverlayRoutine()
     {
-        if (healthBarSlider != null)
+        damageFlashCanvas.SetActive(true);
+        CanvasGroup canvasGroup = damageFlashCanvas.GetComponent<CanvasGroup>();
+        if (canvasGroup == null) canvasGroup = damageFlashCanvas.AddComponent<CanvasGroup>();
+
+        // Instantly make it fully visible
+        canvasGroup.alpha = 1f;
+
+        // Smoothly fade it out over time
+        float elapsed = 0f;
+        while (elapsed < flashDuration)
         {
-            healthBarSlider.value = currentHealth;
+            elapsed += Time.deltaTime;
+            canvasGroup.alpha = Mathf.Lerp(1f, 0f, elapsed / flashDuration);
+            yield return null;
+        }
+
+        damageFlashCanvas.SetActive(false);
+    }
+
+    public void RestoreFullHealth()
+    {
+        currentHealth = maxHealth;
+        if (healthSlider != null)
+        {
+            healthSlider.value = currentHealth;
         }
     }
 
-    void TriggerGameOver()
+    private void TriggerLoseSequence()
     {
-        if (isGameFinished) return;
-        isGameFinished = true;
+        if (isDead) return;
+        isDead = true;
 
-        if (gameOverCanvas != null) gameOverCanvas.SetActive(true);
+        if (youLoseCanvas != null)
+        {
+            youLoseCanvas.SetActive(true);
+            Time.timeScale = 0f; 
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+            this.enabled = false;
+            if (interactionSystem != null) interactionSystem.SetControllersState(false);
+        }
+    }
 
-        Time.timeScale = 0f;
-        Cursor.lockState = CursorLockMode.None;
-        Cursor.visible = true;
+    public void EscapeSuccessVictory()
+    {
+        // Redirects the old function name to your working win sequence
+        PlayerInteraction interaction = GetComponent<PlayerInteraction>();
+        if (interaction != null)
+        {
+            interaction.TriggerWinSequence();
+        }
     }
 }
