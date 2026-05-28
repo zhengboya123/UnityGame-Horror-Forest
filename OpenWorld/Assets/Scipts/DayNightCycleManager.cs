@@ -30,6 +30,9 @@ public class DayNightCycleManager : MonoBehaviour
     private PlayerInteraction playerInteraction;
     private PlayerSurvival playerSurvival;
 
+    // Persistent tracking list to preserve exact ground instances across days
+    [HideInInspector] public List<GameObject> trackedGasBottles = new List<GameObject>();
+
     void Awake()
     {
         if (Instance == null) Instance = this;
@@ -50,13 +53,8 @@ public class DayNightCycleManager : MonoBehaviour
 
     public void CalculateDayRequirements()
     {
-        // Day 1: (1-1)*5 + 10 = 10 logs | Day 2: (2-1)*5 + 10 = 15 logs | Day 3: 20 logs...
         activeLogsRequired = 10 + ((currentDayNumber - 1) * 5);
-        
-        // Day 1: (1-1)*5 + 5 = 5 kills  | Day 2: (2-1)*5 + 5 = 10 kills | Day 3: 15 kills...
         activeSavagesKillGoal = 5 + ((currentDayNumber - 1) * 5);
-        
-        // Max capacity matches the day's total target curve perfectly
         activeSavageMaxSimultaneous = activeSavagesKillGoal;
 
         Debug.Log($"[DIFFICULTY] Day {currentDayNumber} Initialized: Logs Needed = {activeLogsRequired}, Kills Needed = {activeSavagesKillGoal}, Spawn Max = {activeSavageMaxSimultaneous}");
@@ -152,7 +150,7 @@ public class DayNightCycleManager : MonoBehaviour
         }
 
         WipeAllActiveSavages();
-        ToggleGasBottlesVisibility(false);
+        ToggleGasBottlesVisibility(false); // Hides all current clones when moving to next morning
 
         yield return new WaitForSecondsRealtime(5f);
 
@@ -198,13 +196,16 @@ public class DayNightCycleManager : MonoBehaviour
 
     public void ToggleGasBottlesVisibility(bool visible)
     {
-        GasBottleItem[] containers = Object.FindObjectsByType<GasBottleItem>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-        foreach (GasBottleItem item in containers)
+        // Remove objects completely picked up/destroyed by player before toggling
+        trackedGasBottles.RemoveAll(item => item == null);
+
+        // Toggle the entire parent GameObject state cleanly so it handles physics & display safely
+        foreach (GameObject gasObj in trackedGasBottles)
         {
-            MeshRenderer mr = item.GetComponentInChildren<MeshRenderer>() ?? item.GetComponent<MeshRenderer>();
-            Collider col = item.GetComponentInChildren<Collider>() ?? item.GetComponent<Collider>();
-            if (mr != null) mr.enabled = visible;
-            if (col != null) col.enabled = visible;
+            if (gasObj != null)
+            {
+                gasObj.SetActive(visible);
+            }
         }
     }
 }

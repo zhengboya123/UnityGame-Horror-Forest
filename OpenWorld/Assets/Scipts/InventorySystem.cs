@@ -41,7 +41,6 @@ public class InventorySystem : MonoBehaviour
         UpdateGasFuelUI();
     }
 
-    // OPTIMIZED METHOD: Now accepts an optional initialFuel parameter (defaults to 10f if picked up elsewhere)
     public void AddItemToHotbar(int slotIndex, string itemType, float initialFuel = 10f)
     {
         if (slotIndex >= unlockedSlots.Length) return;
@@ -55,7 +54,6 @@ public class InventorySystem : MonoBehaviour
 
         if (itemType == "GasBottle" && slotIndex == 3)
         {
-            // Sync with the custom fuel value passed from the ground object
             gasBottleFuelCapacity = initialFuel;
         }
 
@@ -76,6 +74,36 @@ public class InventorySystem : MonoBehaviour
         if (visualAxeInHand != null) visualAxeInHand.SetActive(currentSlot == 1 && unlockedSlots[1]);
         if (visualLogInHand != null) visualLogInHand.SetActive(currentSlot == 2 && unlockedSlots[2] && woodLogCount > 0);
         if (visualGasInHand != null) visualGasInHand.SetActive(currentSlot == 3 && unlockedSlots[3]);
+
+        if (currentSlot == 1 && unlockedSlots[1] && visualAxeInHand != null)
+        {
+            visualAxeInHand.transform.localPosition = new Vector3(0.362f, -0.258f, 0.71f);
+            visualAxeInHand.transform.localRotation = Quaternion.Euler(-45.157f, -231.098f, 109.444f);
+
+            Animator axeAnim = visualAxeInHand.GetComponent<Animator>();
+            if (axeAnim != null)
+            {
+                axeAnim.ResetTrigger("swingOnce");
+                axeAnim.SetBool("isChopping", false);
+                axeAnim.Play("Idle", 0, 0f);
+                axeAnim.Update(0f);
+            }
+        }
+
+        PlayerInteraction interactionScript = GetComponent<PlayerInteraction>();
+        if (interactionScript != null && interactionScript.GetComponent<AudioSource>() != null)
+        {
+            AudioSource actionSource = interactionScript.GetComponent<AudioSource>();
+            
+            if (currentSlot == 3)
+            {
+                actionSource.volume = 3.0f; 
+            }
+            else
+            {
+                actionSource.volume = 1.0f;
+            }
+        }
     }
 
     public bool CanPickupLog() => woodLogCount < 3;

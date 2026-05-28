@@ -11,6 +11,17 @@ public class PlayerInteraction : MonoBehaviour
     public float interactionDistance = 4.5f;
     public TextMeshProUGUI hintTextElement;
 
+    [Header("Audio System Assets")]
+    [Tooltip("Assign the first AudioSource here (used for looping sounds like chopping and pouring gas)")]
+    public AudioSource dynamicActionAudioSource; 
+    [Tooltip("Assign the second AudioSource here (used for sudden one-shot sound effects)")]
+    public AudioSource oneShotAudioSource;        
+    [Space(5)]
+    public AudioClip choppingTreeSound;
+    public AudioClip treeFallingSound;
+    public AudioClip addingGasSound;
+    public AudioClip boatEngineSound;
+
     [Header("Axe Arc Combat Cleave")]
     public float attackRadius = 4.0f;
     public float attackAngle = 180f;
@@ -18,7 +29,7 @@ public class PlayerInteraction : MonoBehaviour
     private const float singleSwingFreezeDuration = 0.8f;
 
     [Header("Horror Visual Effects")]
-    public GameObject bloodSplashPrefab; // Drag your blood particle prefab here
+    public GameObject bloodSplashPrefab; 
     [Header("Axe Animation Hook")]
     public Animator axeAnimator; 
 
@@ -30,6 +41,21 @@ public class PlayerInteraction : MonoBehaviour
 
     [Header("Win Game State Configuration")]
     public GameObject youWinCanvas; 
+
+    // ==========================================
+    //            ESCAPE MOVEMENT CONFIG
+    // ==========================================
+    [Header("Boat Escape Sequence Settings")]
+    [Tooltip("The main parent GameObject of your boat that should move out onto the water")]
+    public Transform escapeBoatObject;
+    [Tooltip("An empty landmark GameObject placed out in the deep water where the boat will teleport")]
+    public Transform waterTeleportTargetLocation;
+    [Tooltip("Reference to your Black Fade Image UI component (used for the screen transition)")]
+    public Image screenFadeOverlayImage;
+    
+    // 0 = Needs Fuel, 1 = Ready to Start Engine, 2 = Engine Running (Ready to Board), 3 = Fading/Escaping
+    private int boatState = 0; 
+    // ==========================================
 
     [Header("Item Prefabs to Drop")]
     public GameObject axePrefab;
@@ -68,8 +94,6 @@ public class PlayerInteraction : MonoBehaviour
     
     private bool isGameOverSequenceActive = false; 
     private List<GameObject> aliveSavagesList = new List<GameObject>();
-
-    // OPTIMIZATION ADDITION: Stores only the index numbers that are valid trees
     private HashSet<int> validTreePrototypeIndexes = new HashSet<int>();
 
     void Start()
@@ -82,7 +106,6 @@ public class PlayerInteraction : MonoBehaviour
         {
             originalTreesBackup = (TreeInstance[])currentTerrain.terrainData.treeInstances.Clone();
             
-            // OPTIMIZATION: Pre-calculate tree indexes once at boot to save thousands of CPU frames
             for (int i = 0; i < currentTerrain.terrainData.treePrototypes.Length; i++)
             {
                 GameObject prefab = currentTerrain.terrainData.treePrototypes[i].prefab;
@@ -98,8 +121,22 @@ public class PlayerInteraction : MonoBehaviour
             cameraTransform = Camera.main != null ? Camera.main.transform : null;
         }
 
+        AudioSource[] sources = GetComponents<AudioSource>();
+        if (dynamicActionAudioSource == null && sources.Length > 0) dynamicActionAudioSource = sources[0];
+        if (oneShotAudioSource == null && sources.Length > 1) oneShotAudioSource = sources[1];
+
+        if (dynamicActionAudioSource != null) dynamicActionAudioSource.loop = true;
+        if (oneShotAudioSource != null) oneShotAudioSource.loop = false;
+
         if (fuelProgressBarSlider != null) fuelProgressBarSlider.gameObject.SetActive(false);
         if (youWinCanvas != null) youWinCanvas.SetActive(false); 
+
+        if (screenFadeOverlayImage != null)
+        {
+            Color c = screenFadeOverlayImage.color;
+            c.a = 0f;
+            screenFadeOverlayImage.color = c;
+        }
 
         ResetProgressVisuals();
         ClearPrompt();
@@ -107,6 +144,8 @@ public class PlayerInteraction : MonoBehaviour
 
     void Update()
     {
+        if (boatState == 3) return;
+
         ManageInteractionRaycast();
         HandleAbandonItemInput();
         CheckInventoryLogDepletionGuard();
@@ -126,6 +165,11 @@ public class PlayerInteraction : MonoBehaviour
             temporaryPool[rnd] = temp;
         }
 
+        if (DayNightCycleManager.Instance != null)
+        {
+            DayNightCycleManager.Instance.trackedGasBottles.Clear();
+        }
+
         for (int i = 0; i < targetSpawnCount; i++)
         {
             if (temporaryPool[i] != null)
@@ -133,6 +177,11 @@ public class PlayerInteraction : MonoBehaviour
                 GameObject spawnedCan = Instantiate(gasBottlePrefab, temporaryPool[i].position, temporaryPool[i].rotation);
                 GasBottleItem bottleScript = spawnedCan.GetComponent<GasBottleItem>();
                 if (bottleScript != null) bottleScript.structuralFuelCapacity = 10f;
+
+                if (DayNightCycleManager.Instance != null)
+                {
+                    DayNightCycleManager.Instance.trackedGasBottles.Add(spawnedCan);
+                }
             }
         }
     }
@@ -143,6 +192,7 @@ public class PlayerInteraction : MonoBehaviour
         bool foundInteractiveTarget = false;
         bool lookingAtTreeValue = false;
         bool lookingAtBoatThisFrame = false;
+        bool isPouringGasThisFrame = false; 
 
         if (cameraTransform == null) return;
 
@@ -166,74 +216,86 @@ public class PlayerInteraction : MonoBehaviour
             if (isLookingAtBoat)
             {
                 lookingAtBoatThisFrame = true;
-                
-                if (objective == null)
+                foundInteractiveTarget = true;
+
+                if (fuelProgressBarSlider != null && !fuelProgressBarSlider.gameObject.activeSelf) 
                 {
-                    objective = hit.collider.GetComponentInParent<ObjectiveInteractable>() 
-                                ?? hit.collider.transform.root.GetComponentInChildren<ObjectiveInteractable>();
+                    fuelProgressBarSlider.gameObject.SetActive(true);
                 }
 
-                foundInteractiveTarget = true;
-                if (playerSurvival != null)
+                if (fuelProgressBarSlider != null)
                 {
-                    if (fuelProgressBarSlider != null && !fuelProgressBarSlider.gameObject.activeSelf) 
-                    {
-                        fuelProgressBarSlider.gameObject.SetActive(true);
-                    }
+                    fuelProgressBarSlider.value = Mathf.Min(currentBoatFuelAmount, 300f);
+                }
 
-                    if (fuelProgressBarSlider != null)
-                    {
-                        fuelProgressBarSlider.value = Mathf.Min(currentBoatFuelAmount, 300f);
-                    }
+                if (currentBoatFuelAmount >= 300f && boatState == 0)
+                {
+                    boatState = 1; 
+                }
 
-                    if (currentBoatFuelAmount >= 300f)
+                if (boatState == 1)
+                {
+                    frameworkText = "Press [E] to activate the boat mechanics!";
+                    
+                    if (Input.GetKeyDown(KeyCode.E)) 
                     {
-                        frameworkText = "Press [E] to escape the forest! (WIN)";
+                        boatState = 2; 
                         
-                        if (Input.GetKeyDown(KeyCode.E)) 
+                        if (oneShotAudioSource != null && boatEngineSound != null)
                         {
-                            TriggerWinSequence();
+                            oneShotAudioSource.PlayOneShot(boatEngineSound);
                         }
+                    }
+                }
+                else if (boatState == 2)
+                {
+                    frameworkText = "Press [E] to get in and escape!";
+                    
+                    if (Input.GetKeyDown(KeyCode.E))
+                    {
+                        boatState = 3; 
+                        StartCoroutine(ExecuteSleepingCanvasEscapeSequence());
+                    }
+                }
+                else if (boatState == 0)
+                {
+                    bool holdingGas = (inventory != null && inventory.currentSlot == 3 && inventory.unlockedSlots[3]);
+
+                    if (holdingGas && inventory.gasBottleFuelCapacity > 0f)
+                    {
+                        frameworkText = $"Hold [Left Click] to pour Gasoline | Fuel left in tank: {inventory.gasBottleFuelCapacity:F1}s";
+                        
+                        if (Input.GetMouseButton(0))
+                        {
+                            isPouringGasThisFrame = true;
+                            float fuelToPour = 10f * Time.deltaTime;
+
+                            if (currentBoatFuelAmount + fuelToPour > 300f)
+                            {
+                                fuelToPour = 300f - currentBoatFuelAmount;
+                            }
+
+                            if (fuelToPour > 0f)
+                            {
+                                currentBoatFuelAmount += fuelToPour;
+                                inventory.gasBottleFuelCapacity -= Time.deltaTime;
+                            }
+
+                            if (inventory.gasBottleFuelCapacity <= 0f)
+                            {
+                                inventory.gasBottleFuelCapacity = 0f;
+                                playerSurvival.CollectGasTank(); 
+                                if (inventory != null) { inventory.EmptyGasCan(); } 
+                            }
+                        }
+                    }
+                    else if (holdingGas && inventory.gasBottleFuelCapacity <= 0f)
+                    {
+                        frameworkText = "This Gas Bottle is empty!";
                     }
                     else
                     {
-                        bool holdingGas = (inventory != null && inventory.currentSlot == 3 && inventory.unlockedSlots[3]);
-
-                        if (holdingGas && inventory.gasBottleFuelCapacity > 0f)
-                        {
-                            frameworkText = $"Hold [Left Click] to pour Gasoline | Fuel left in tank: {inventory.gasBottleFuelCapacity:F1}s";
-                            
-                            if (Input.GetMouseButton(0))
-                            {
-                                float fuelToPour = 10f * Time.deltaTime;
-
-                                if (currentBoatFuelAmount + fuelToPour > 300f)
-                                {
-                                    fuelToPour = 300f - currentBoatFuelAmount;
-                                }
-
-                                if (fuelToPour > 0f)
-                                {
-                                    currentBoatFuelAmount += fuelToPour;
-                                    inventory.gasBottleFuelCapacity -= Time.deltaTime;
-                                }
-
-                                if (inventory.gasBottleFuelCapacity <= 0f)
-                                {
-                                    inventory.gasBottleFuelCapacity = 0f;
-                                    playerSurvival.CollectGasTank(); 
-                                    if (inventory != null) { inventory.EmptyGasCan(); } 
-                                }
-                            }
-                        }
-                        else if (holdingGas && inventory.gasBottleFuelCapacity <= 0f)
-                        {
-                            frameworkText = "This Gas Bottle is empty!";
-                        }
-                        else
-                        {
-                            frameworkText = "Boat needs Fuel. Equip Gas Bottle from Slot 4!";
-                        }
+                        frameworkText = "Boat needs Fuel. Equip Gas Bottle from Slot 4!";
                     }
                 }
             }
@@ -266,25 +328,28 @@ public class PlayerInteraction : MonoBehaviour
             {
                 foundInteractiveTarget = true;
 
-                if (pickupComponent != null && pickupComponent.itemType == PickupItem.ItemType.Axe)
+                if (pickupComponent != null && pickupComponent.itemType == pickupComponent.itemType) // Native matching configuration
                 {
-                    if (inventory != null && !inventory.unlockedSlots[1])
+                    if (pickupComponent.itemType == PickupItem.ItemType.Axe)
                     {
-                        frameworkText = "Press [E] to pick up Axe";
-                        if (Input.GetKeyDown(KeyCode.E)) { inventory.AddItemToHotbar(1, "Axe"); Destroy(pickupComponent.gameObject); }
-                    }
-                    else frameworkText = "You already have an Axe";
-                }
-                else if (pickupComponent != null && pickupComponent.itemType == PickupItem.ItemType.Log)
-                {
-                    if (inventory != null)
-                    {
-                        if (inventory.CanPickupLog())
+                        if (inventory != null && !inventory.unlockedSlots[1])
                         {
-                            frameworkText = "Press [E] to pick up Log";
-                            if (Input.GetKeyDown(KeyCode.E)) { inventory.AddItemToHotbar(2, "Log"); Destroy(pickupComponent.gameObject); }
+                            frameworkText = "Press [E] to pick up Axe";
+                            if (Input.GetKeyDown(KeyCode.E)) { inventory.AddItemToHotbar(1, "Axe"); Destroy(pickupComponent.gameObject); }
                         }
-                        else frameworkText = "<color=red>Inventory Full! Max 3 Logs</color>";
+                        else frameworkText = "You already have an Axe";
+                    }
+                    else if (pickupComponent.itemType == PickupItem.ItemType.Log)
+                    {
+                        if (inventory != null)
+                        {
+                            if (inventory.CanPickupLog())
+                            {
+                                frameworkText = "Press [E] to pick up Log";
+                                if (Input.GetKeyDown(KeyCode.E)) { inventory.AddItemToHotbar(2, "Log"); Destroy(pickupComponent.gameObject); }
+                            }
+                            else frameworkText = "<color=red>Inventory Full! Max 3 Logs</color>";
+                        }
                     }
                 }
                 else if (isGasBottleTarget)
@@ -316,7 +381,7 @@ public class PlayerInteraction : MonoBehaviour
                 }
             }
 
-            // 4. WAREHOUSE CHECK (MISSION COUNTING LOG SYSTEM)
+            // 4. WAREHOUSE CHECK
             if (hit.collider.CompareTag("WarehouseSpace") && !foundInteractiveTarget)
             {
                 foundInteractiveTarget = true;
@@ -361,16 +426,13 @@ public class PlayerInteraction : MonoBehaviour
                 }
             }
 
-            // 6. FIXED TERRAIN CHOPPING TREE CHECK
-            // Use GetComponentInParent to safely find the Terrain script regardless of compound colliders.
+            // 6. TERRAIN CHOPPING TREE CHECK
             Terrain terrain = hit.collider.GetComponentInParent<Terrain>();
             if (terrain != null && terrain.terrainData != null && !foundInteractiveTarget && !isProcessingTreeCut)
             {
                 TerrainData terrainData = terrain.terrainData;
-                
-                // ADJUST THESE FOR YOUR PRECISION PREFERENCE:
-                float maxCrosshairRadius = 1.8f; // Distance threshold on the horizontal XZ plane to the trunk
-                float maxPlayerReach = 4.0f;     // Absolute max physical reach distance
+                float maxCrosshairRadius = 1.8f; 
+                float maxPlayerReach = 4.0f;     
                 
                 float closestAimDistance = float.MaxValue;
                 int targetedTreeIndex = -1;
@@ -379,19 +441,14 @@ public class PlayerInteraction : MonoBehaviour
                 for (int i = 0; i < trees.Length; i++)
                 {
                     if (choppedTreeIndices.Contains(i) || trees[i].position.y < -2f || trees[i].widthScale <= 0.01f) continue;
-
                     if (!validTreePrototypeIndexes.Contains(trees[i].prototypeIndex)) continue;
 
-                    // Calculate world position of this tree instance
                     Vector3 treeWorldPos = Vector3.Scale(trees[i].position, terrainData.size) + terrain.transform.position;
                     
-                    // We check distance entirely on the X-Z plane (ignoring height differences) 
-                    // This guarantees that looking up at the high trunk still registers accurately!
                     Vector3 flatHitPoint = new Vector3(hit.point.x, 0, hit.point.z);
                     Vector3 flatTreePos = new Vector3(treeWorldPos.x, 0, treeWorldPos.z);
                     float crosshairDistance = Vector3.Distance(flatHitPoint, flatTreePos);
                     
-                    // Physical check: Ensure player is standing near the trunk
                     float playerDistance = Vector3.Distance(transform.position, treeWorldPos);
 
                     if (crosshairDistance <= maxCrosshairRadius && playerDistance <= maxPlayerReach)
@@ -428,6 +485,31 @@ public class PlayerInteraction : MonoBehaviour
             }
         }
 
+        if (lookingAtTreeValue && Input.GetMouseButton(0) && !isProcessingTreeCut)
+        {
+            if (dynamicActionAudioSource != null && (dynamicActionAudioSource.clip != choppingTreeSound || !dynamicActionAudioSource.isPlaying))
+            {
+                dynamicActionAudioSource.clip = choppingTreeSound;
+                if (choppingTreeSound != null) dynamicActionAudioSource.Play();
+            }
+        }
+        else if (isPouringGasThisFrame)
+        {
+            if (dynamicActionAudioSource != null && (dynamicActionAudioSource.clip != addingGasSound || !dynamicActionAudioSource.isPlaying))
+            {
+                dynamicActionAudioSource.clip = addingGasSound;
+                if (addingGasSound != null) dynamicActionAudioSource.Play();
+            }
+        }
+        else
+        {
+            if (dynamicActionAudioSource != null && dynamicActionAudioSource.isPlaying)
+            {
+                dynamicActionAudioSource.Stop();
+                dynamicActionAudioSource.clip = null;
+            }
+        }
+
         if (!lookingAtBoatThisFrame)
         {
             if (fuelProgressBarSlider != null && fuelProgressBarSlider.gameObject.activeSelf)
@@ -447,14 +529,71 @@ public class PlayerInteraction : MonoBehaviour
             if (inventory != null && inventory.IsHoldingAxe()) ExecuteSingleSwingAttack();
         }
 
-        if (foundInteractiveTarget && !string.IsNullOrEmpty(frameworkText)) 
+        if (foundInteractiveTarget && !string.IsNullOrEmpty(frameworkText)) SetPromptText(frameworkText);
+        else ClearPrompt();
+    }
+
+    private IEnumerator ExecuteSleepingCanvasEscapeSequence()
+    {
+        ClearPrompt();
+
+        float elapsed = 0f;
+        float fadeDuration = 1.5f;
+        while (elapsed < fadeDuration)
         {
-            SetPromptText(frameworkText);
+            elapsed += Time.deltaTime;
+            if (screenFadeOverlayImage != null)
+            {
+                Color c = screenFadeOverlayImage.color;
+                c.a = Mathf.Clamp01(elapsed / fadeDuration);
+                screenFadeOverlayImage.color = c;
+            }
+            yield return null;
         }
-        else 
+
+        yield return new WaitForSeconds(1.5f);
+
+        MonoBehaviour fpc = GetComponent("FirstPersonController") as MonoBehaviour;
+        MonoBehaviour pm = GetComponent("PlayerMovement") as MonoBehaviour;
+        CharacterController cc = GetComponent<CharacterController>();
+
+        if (fpc != null) fpc.enabled = false;
+        if (pm != null) pm.enabled = false;
+        if (cc != null) cc.enabled = false;
+
+        if (escapeBoatObject != null && waterTeleportTargetLocation != null)
         {
-            ClearPrompt();
+            escapeBoatObject.position = waterTeleportTargetLocation.position;
+            escapeBoatObject.rotation = Quaternion.Euler(-0.04f, -85.853f, -1.308f);
+            
+            transform.SetParent(escapeBoatObject);
+            transform.localPosition = new Vector3(0f, 0.5f, -0.2f); 
+            transform.localRotation = Quaternion.identity;
+
+            // FIX: Reset the main look camera rotation completely to 0,0,0 inside the anchored boat space
+            if (cameraTransform != null)
+            {
+                cameraTransform.localRotation = Quaternion.identity;
+            }
         }
+
+        yield return new WaitForSeconds(0.2f);
+
+        elapsed = 0f;
+        while (elapsed < fadeDuration)
+        {
+            elapsed += Time.deltaTime;
+            if (screenFadeOverlayImage != null)
+            {
+                Color c = screenFadeOverlayImage.color;
+                c.a = Mathf.Clamp01(1f - (elapsed / fadeDuration));
+                screenFadeOverlayImage.color = c;
+            }
+            yield return null;
+        }
+
+        yield return new WaitForSeconds(0.5f);
+        TriggerWinSequence();
     }
 
     public void TriggerWinSequence()
@@ -488,8 +627,6 @@ public class PlayerInteraction : MonoBehaviour
         aliveSavagesList.RemoveAll(item => item == null);
         int currentMaxAllowed = DayNightCycleManager.Instance.activeSavageMaxSimultaneous;
 
-        Debug.Log($"[SPAWNER] Active savages: {aliveSavagesList.Count} / Target: {currentMaxAllowed}");
-
         while (aliveSavagesList.Count < currentMaxAllowed)
         {
             Transform randomPoint = transformSpawnPoints[Random.Range(0, transformSpawnPoints.Length)];
@@ -497,7 +634,6 @@ public class PlayerInteraction : MonoBehaviour
             {
                 GameObject newSavage = Instantiate(abnormalSpeciesPrefab, randomPoint.position, randomPoint.rotation);
                 aliveSavagesList.Add(newSavage);
-                Debug.Log($"[SPAWNER] Spawned new savage at {randomPoint.name}.");
             }
         }
     }
@@ -576,6 +712,13 @@ public class PlayerInteraction : MonoBehaviour
     IEnumerator ExecutePhysicalTreeRemoval(Terrain terrain, int accurateTreeIndex)
     {
         isProcessingTreeCut = true;
+
+        if (dynamicActionAudioSource != null && dynamicActionAudioSource.isPlaying && dynamicActionAudioSource.clip == choppingTreeSound)
+        {
+            dynamicActionAudioSource.Stop();
+            dynamicActionAudioSource.clip = null;
+        }
+
         ClearPrompt();
         if (axeAnimator != null) axeAnimator.SetBool("isChopping", false);
 
@@ -593,6 +736,11 @@ public class PlayerInteraction : MonoBehaviour
             currentTrees[accurateTreeIndex] = targetedInstance;
             data.treeInstances = currentTrees;
             terrain.Flush();
+
+            if (oneShotAudioSource != null && treeFallingSound != null)
+            {
+                oneShotAudioSource.PlayOneShot(treeFallingSound);
+            }
 
             TerrainCollider tc = terrain.GetComponent<TerrainCollider>();
             if (tc != null) { tc.enabled = false; Physics.SyncTransforms(); tc.enabled = true; }
@@ -653,6 +801,7 @@ public class PlayerInteraction : MonoBehaviour
             {
                 SpawnGasBottlesRandomly();
             }
+            
             DayNightCycleManager.Instance.ToggleGasBottlesVisibility(true);
         } 
     }
@@ -706,6 +855,11 @@ public class PlayerInteraction : MonoBehaviour
         foreach (Collider col in spawnedItem.GetComponentsInChildren<Collider>()) { col.isTrigger = false; col.enabled = true; }
         Rigidbody rbTemp = spawnedItem.GetComponent<Rigidbody>() ?? spawnedItem.AddComponent<Rigidbody>();
         rbTemp.isKinematic = false; rbTemp.useGravity = true; rbTemp.collisionDetectionMode = CollisionDetectionMode.Continuous;
+
+        if (itemPrefab == gasBottlePrefab && DayNightCycleManager.Instance != null)
+        {
+            DayNightCycleManager.Instance.trackedGasBottles.Add(spawnedItem);
+        }
     }
 
     void OnApplicationQuit()
