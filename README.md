@@ -1,6 +1,14 @@
 # UnityGame-Horror-Forest
 
-Over-logging危害
+
+
+======================================================================================
+
+The effect of deforestation
+
+======================================================================================
+
+
 
 
 
@@ -8,7 +16,23 @@ Deforestation is the clearing, destroying, or otherwise removal of trees throug
 
 
 
-这个游戏的目的
+Between 2010 and 2020, the net loss in forests globally was 4.7 million hectares per year.1 However, deforestation rates were much higher.
+
+
+
+The UN FAO estimates that 10 million hectares of forest are cut down each year.
+
+
+
+The history of deforestation is a tragic one, in which we have lost not only wild and beautiful landscapes but also the wildlife within them. But, the fact that forest transitions are possible should give us confidence that a positive future is possible. Many countries have not only ended deforestation but have actually achieved substantial reforestation. It will be possible for our generation to achieve the same on a global scale and bring the 10,000-year history of forest loss to an end.
+
+
+
+======================================================================================
+
+Purpose to make this game
+
+======================================================================================
 
 
 
@@ -16,25 +40,45 @@ This game was created in purpose to promote for stop of over-logging. We aim to 
 
 
 
-玩法
+======================================================================================
+
+How to play this game
+
+======================================================================================
 
 
 
-Caution before playing: This game involve horror element that may cause psychological damage and  panic.
+Press w to go forward, s to go backward, a to go leftward, and d to go rightward. Press e to interact with objects in the game and press q to abandon the item. Hold left click to add oil and cut trees.
 
 
 
-This is a single player game and is in first person perspective. Player have 3 slots of inventory, and max of 3 item per stack for each inventory. Player would be given an axe initially and they could chop down trees with that axe. When their inventory got full, they could return to the warehouse where they spawn and hand in the logs. Notice the change in the color of sky and overall mood as player cut down the trees. Once player cut down \[ ] woods, monsters will spawn and begin to chase the player. Collect oil barrels scattered around the forest, and pour it to the boat beside the river to escape the chase, or else you would be kept in this forest forever.
+Axe is set right in front of the player and on the floor.
+
+
+
+======================================================================================
+
+More Specific Documentation
+
+======================================================================================
+
+
+
+This is a single-player game and is in first-person perspective. Players have 3 slots of inventory, and a max of 3 logs, an axe, and a bottle of gas. The player would be given an axe initially, and they could chop down trees with that axe. When their inventory got full, they could return to the warehouse where they spawned and hand in the logs to the warehouse space. Notice the change in the color of the sky and overall mood as the player cuts down the trees. Once the player cuts down 13 woods, monsters will spawn and begin to chase the player. Collect oil barrels scattered around the forest, and pour it to the boat beside the river to escape the chase, or else you would be kept in this forest forever.
+
+If you are low in health, you may consider taking a nap to get to the next day because your health will restore full. However, the more day past, the more difficult to escape. Keep in mind that oil barrels will ONLY be available at night. And all pickable items will have a yellow light attached to them, making it more obvious. Repeat: ALL Pickable objects will have light shine on them.
 
 
 
 
 
-Composition of the Game
+**Caution before playing:** 
+
+This game involves horror elements that may cause psychological damage and panic.
 
 
 
-In the production of this game, all logic and story were original and came from the ideas of producers. The assets and prefabs of this game were assessed and come from the Unity Asset Store. The script (code) composition of the game was 100% assisted by AI though producers involved in revise and debug of code generated.
+For a better experience, please wear headphones.
 
 
 
