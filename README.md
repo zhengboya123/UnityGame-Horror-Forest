@@ -68,6 +68,10 @@ This is a single-player game and is in first-person perspective. Players have 3 
 
 If you are low in health, you may consider taking a nap to get to the next day because your health will restore full. However, the more day past, the more difficult to escape. Keep in mind that oil barrels will ONLY be available at night. And all pickable items will have a yellow light attached to them, making it more obvious. Repeat: ALL Pickable objects will have light shine on them.
 
+You are completely safe to hide in your house becuase savages are not able to enter your house.
+
+press 1,2,3,4 to change slot
+
 
 
 
